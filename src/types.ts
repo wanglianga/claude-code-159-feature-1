@@ -101,8 +101,61 @@ export interface BorrowRequest {
   delayReason?: string
   cancelReason?: string
   /** 归还/补充方式 */
-  closeMode?: 'return_sealed' | 'restock_new' | 'mutual_aid'
+  closeMode?: 'return_sealed' | 'restock_new' | 'mutual_aid' | 'community_recycle'
   closeNote?: string
+  /** 完成交接时是否处于临期优先流转期（≤10 天到期） */
+  nearExpiry?: boolean
+  /** 借用人对临期物品效期与使用前检查的逐项确认记录 */
+  nearExpiryAck?: NearExpiryAck
+  /** 约定的借出后使用回访时间（临期物品交接完成时间 + 回访时限） */
+  followUpAt?: string
+  /** 借用人提交的使用回访反馈 ID */
+  useFeedbackId?: string
+}
+
+/** 临期物品交接时借用人的逐项确认（明确效期 + 使用前检查要求，留痕可追溯） */
+export interface NearExpiryAck {
+  at: string
+  /** 确认人（借用人；志愿者代送当面核验后代提交时仍记录借用人） */
+  actorId: string
+  actorName: string
+  /** 提交人（志愿者代送时可能与借用人不同） */
+  submittedBy?: string
+  /** 已核对包装标注的具体到期日 */
+  expiryConfirmed: boolean
+  /** 已检查整盒/整包及独立小包装封签完好、无拆封痕迹 */
+  sealConfirmed: boolean
+  /** 已检查无受潮、变色、污渍、渗漏、破损、异味 */
+  appearanceConfirmed: boolean
+  /** 承诺到期日前使用，到期当日及之后不再使用 */
+  withinDateUse: boolean
+  /** 确认文案快照 */
+  statement: string
+}
+
+/** 借出后使用回访：是否使用 */
+export type UseFeedbackUsed = 'used' | 'partial' | 'unused'
+
+/** 临期物品借出后，借用人按约定时间反馈的使用情况 */
+export interface UseFeedback {
+  id: string
+  requestId: string
+  itemId: string
+  borrowerId: string
+  borrowerName: string
+  at: string
+  /** 是否使用：已全部使用 / 用了一部分 / 完全未使用 */
+  used: UseFeedbackUsed
+  /** 是否需要社区回收剩余物品 */
+  needRecycle: boolean
+  /** 回收方式：志愿者上门取 / 借用人自行送到共享柜 */
+  recycleMethod?: 'volunteer_pickup' | 'self_dropoff'
+  note?: string
+  /** 社区回收完成闭环信息 */
+  resolvedAt?: string
+  resolverId?: string
+  resolverName?: string
+  resolveNote?: string
 }
 
 export interface Feedback {
@@ -154,6 +207,10 @@ export interface TimelineEvent {
     | 'overdue_flagged'
     | 'delay_flagged'
     | 'cancelled'
+    | 'near_expiry_notified' // 无人借用：提醒共享人取回或报废（兼回访催收）
+    | 'near_expiry_ack' // 交接：借用人确认效期与使用前检查
+    | 'use_feedback' // 借出后回访反馈（是否使用/剩余/回收）
+    | 'recycled' // 社区回收剩余物品并闭环
   detail?: string
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMedkitStore } from '@/stores/medkit'
 import { useFlash } from '@/composables/useFlash'
@@ -10,17 +10,24 @@ import {
   PICKUP_WINDOW_HOURS,
   SCENE_LABELS,
   STORAGE_LABELS,
+  isNearExpiry,
   validateDraft,
 } from '@/rules'
 import SafetyBanner from '@/components/SafetyBanner.vue'
 import ExpiryBadge from '@/components/ExpiryBadge.vue'
 import PhotoCapture from '@/components/PhotoCapture.vue'
+import NearExpiryAckPanel from '@/components/NearExpiryAckPanel.vue'
 
 const store = useMedkitStore()
 const router = useRouter()
 const { show } = useFlash()
 const tab = ref<'review' | 'delivery' | 'exceptions' | 'waiting'>('review')
 const photos = ref<Record<string, string>>({})
+const acks = reactive<Record<string, { expiryConfirmed: boolean; sealConfirmed: boolean; appearanceConfirmed: boolean; withinDateUse: boolean }>>({})
+function ackOf(id: string) {
+  if (!acks[id]) acks[id] = { expiryConfirmed: false, sealConfirmed: false, appearanceConfirmed: false, withinDateUse: false }
+  return acks[id]
+}
 
 const reviewQueue = computed(() => store.reviewQueue)
 const overdue = computed(() => store.overduePickups)
@@ -51,7 +58,18 @@ function reject(id: string) {
   show(r.message, r.ok ? 'ok' : 'err')
 }
 function completeDelivery(id: string) {
-  const r = store.completeHandover(id, photos.value[id] ?? '', '志愿者送达并拍照确认')
+  const r0 = store.requests.find((x) => x.id === id)
+  const it = r0 ? itemOf(r0.itemId) : undefined
+  const near = !!it && isNearExpiry(it.expiryDate, store.nowIso)
+  const a = ackOf(id)
+  const r = store.completeHandover(
+    id,
+    photos.value[id] ?? '',
+    '志愿者送达并拍照确认',
+    near
+      ? { expiryConfirmed: a.expiryConfirmed, sealConfirmed: a.sealConfirmed, appearanceConfirmed: a.appearanceConfirmed, withinDateUse: a.withinDateUse }
+      : undefined,
+  )
   show(r.message, r.ok ? 'ok' : 'err')
 }
 function delay(id: string) {
@@ -150,9 +168,20 @@ function confirmWaiting(id: string) {
       <div v-if="r.note" class="muted">留言：{{ r.note }}</div>
       <div v-if="r.delayReason" class="banner banner-warn" style="margin-top: 8px">延误说明：{{ r.delayReason }}</div>
 
+      <NearExpiryAckPanel v-if="isNearExpiry(itemOf(r.itemId).expiryDate, store.nowIso)" :model-value="ackOf(r.id)" @update:model-value="(v) => Object.assign(ackOf(r.id), v)" :item="itemOf(r.itemId)" :now="store.nowIso" />
+      <div v-if="isNearExpiry(itemOf(r.itemId).expiryDate, store.nowIso)" class="muted" style="margin: -4px 0 8px">
+        代送确认记录记在借用人 {{ r.applicantName }} 名下，请当面与其逐项核对后再勾选。
+      </div>
+
       <PhotoCapture @captured="(p) => (photos[r.id] = p)" />
       <div class="card-actions">
-        <button class="btn btn-primary btn-sm" :disabled="!photos[r.id]" @click="completeDelivery(r.id)">送达拍照，完成交接</button>
+        <button
+          class="btn btn-primary btn-sm"
+          :disabled="!photos[r.id] || (isNearExpiry(itemOf(r.itemId).expiryDate, store.nowIso) && !(ackOf(r.id).expiryConfirmed && ackOf(r.id).sealConfirmed && ackOf(r.id).appearanceConfirmed && ackOf(r.id).withinDateUse))"
+          @click="completeDelivery(r.id)"
+        >
+          送达拍照{{ isNearExpiry(itemOf(r.itemId).expiryDate, store.nowIso) ? '并完成借用人临期确认' : '' }}，完成交接
+        </button>
         <button class="btn btn-warn btn-sm" @click="delay(r.id)">报备配送延误</button>
         <button class="btn btn-sm" @click="reassign(r.id)">改派工作人员兜底</button>
       </div>

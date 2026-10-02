@@ -87,22 +87,44 @@ export const CLOSE_MODE_LABELS = {
   return_sealed: '归还原物（未拆封）',
   restock_new: '补充同规格新品',
   mutual_aid: '邻里赠予，无需归还',
+  community_recycle: '社区回收剩余（临期物品）',
+} as const
+
+/** 借出后使用回访选项 */
+export const USE_FEEDBACK_USED_LABELS = {
+  used: '已全部使用，无剩余',
+  partial: '用了一部分，还有剩余',
+  unused: '完全未使用',
+} as const
+
+export const RECYCLE_METHOD_LABELS = {
+  volunteer_pickup: '请志愿者上门取回',
+  self_dropoff: '我自行送到共享柜/居委会',
 } as const
 
 // ---- 业务规则参数 ----
 /** 效期预警阈值（天） */
 export const EXPIRY_WARN_DAYS = 60
 export const EXPIRY_DANGER_DAYS = 30
+/** 临期优先流转阈值（天）：≤10 天进入工作人员“临期优先流转”清单，优先推荐、专人盯办 */
+export const EXPIRY_PRIORITY_DAYS = 10
+/** 临期物品无人借用时，距到期多少天提醒共享人取回或报废 */
+export const NEAR_EXPIRY_OWNER_NOTICE_DAYS = 5
+/** 临期物品借出后，约定多少小时内回访借用人使用情况 */
+export const NEAR_EXPIRY_FOLLOWUP_HOURS = 24
+/** 借用人回访逾期未反馈多少小时，工作人员看板标红催收 */
+export const NEAR_EXPIRY_FOLLOWUP_GRACE_HOURS = 12
 /** 确认后取走/完成交接的时限（小时） */
 export const PICKUP_WINDOW_HOURS = 24
 /** 志愿者配送承诺时限（小时） */
 export const DELIVERY_SLA_HOURS = 6
 
-export type ExpiryLevel = 'expired' | 'danger' | 'warn' | 'ok'
+export type ExpiryLevel = 'expired' | 'priority' | 'danger' | 'warn' | 'ok'
 
 export function expiryLevel(expiryDate: string, now: string | Date): ExpiryLevel {
   const d = daysUntil(expiryDate, now)
   if (d < 0) return 'expired'
+  if (d <= EXPIRY_PRIORITY_DAYS) return 'priority'
   if (d <= EXPIRY_DANGER_DAYS) return 'danger'
   if (d <= EXPIRY_WARN_DAYS) return 'warn'
   return 'ok'
@@ -110,10 +132,41 @@ export function expiryLevel(expiryDate: string, now: string | Date): ExpiryLevel
 
 export const EXPIRY_LEVEL_TEXT: Record<ExpiryLevel, string> = {
   expired: '已过期',
+  priority: '临期优先流转（≤10天）',
   danger: '临近效期（≤30天）',
   warn: '效期不足60天',
   ok: '效期正常',
 }
+
+/** 临期物品交接时，借用人必须逐项确认的使用前检查要求 */
+export interface NearExpiryCheckItem {
+  key: 'expiry' | 'seal' | 'appearance' | 'within_date'
+  label: string
+  detail: string
+}
+export const NEAR_EXPIRY_CHECKS: NearExpiryCheckItem[] = [
+  { key: 'expiry', label: '核对效期', detail: '已逐字核对包装标注的生产日期与有效期（失效期），确认到期日为交接页红字显示的日期。' },
+  { key: 'seal', label: '检查封签', detail: '整盒/整包未开封，独立小包装封签完好、无拆封与重新粘贴痕迹。' },
+  { key: 'appearance', label: '检查外观', detail: '无受潮、变色、污渍、渗漏、挤压破损与异常气味；退热贴凝胶无干涸。' },
+  { key: 'within_date', label: '到期前使用', detail: '承诺仅在到期日之前使用；到期当日及之后绝不使用，按社区指引交回或处理。' },
+]
+
+/** 临期物品可使用场景提示（按场景给安全话术，仍不做诊断） */
+export const NEAR_EXPIRY_SCENE_HINTS: Record<Scene, string> = {
+  child_night_fever: '夜间物理降温、测温应急：请当天或次日尽快使用；孩子持续高热/精神差请立即就医，不要因“东西快到期”而拖延就医。',
+  elderly_wound: '老人浅表小伤口的临时清洁包扎：开封后立即使用，不留存到到期日后；伤口较深、出血不止或化脓请就医。',
+  no_mask: '近期 1–2 次就医、陪诊、外出必需佩戴场景，不建议领取后长期存放。',
+  home_care: '居家护理 48 小时内确定要用的耗材周转；不确定近期会用就不要申领，避免临期物品积压在个人家中。',
+}
+
+/** 工作人员“建议优先推荐范围” */
+export const NEAR_EXPIRY_PRIORITY_HINTS: string[] = [
+  '优先推荐给登记过对应急用场景（如孩子夜间发烧、老人换药、近日陪诊就医）的居民，而非泛群公告。',
+  '优先推荐给本小区近 7 天提交过该物品/同品类候补申请的邻居，可在志愿者候补协调页直接确认递补。',
+  '优先支持 24–48 小时内确定使用的家庭（夜间发热、次日就医陪诊、约定换药），不推荐给“先囤着备用”的居民。',
+  '可优先安排志愿者代送或门口无接触交接，压缩交接耗时；自取需在 24 小时取件时限内完成。',
+  '临近到期仍无人能在到期前用掉的，不再硬推，提醒共享人取回或由工作人员按报废流程处理，避免流入个人家中过期。',
+]
 
 // ---- 禁入规则：处方药 / 拆封药品 / 冷链药品 不能进入共享 ----
 /** 名称中出现这些词，判定为疑似药品（含处方药），一律禁入 */
@@ -152,7 +205,9 @@ export function validateDraft(draft: ItemDraft, now: string | Date): DraftValida
   } else {
     const d = daysUntil(draft.expiryDate, now)
     if (d < 0) errors.push('该物品已过期（超过有效期），不能登记共享，应按有害/医疗垃圾处理。')
-    else if (d <= EXPIRY_DANGER_DAYS) warnings.push(`距有效期不足 ${EXPIRY_DANGER_DAYS} 天，审核时将重点确认，可能无法发布。`)
+    else if (d <= EXPIRY_PRIORITY_DAYS)
+      warnings.push(`距有效期仅剩 ${d} 天（≤${EXPIRY_PRIORITY_DAYS} 天临期优先流转线）：新登记原则上不再发布；已在架物品进入此区间会自动列入工作人员临期清单，到期前优先推荐、盯办回访与回收。`)
+    else if (d <= EXPIRY_DANGER_DAYS) warnings.push(`距有效期不足 ${EXPIRY_DANGER_DAYS} 天，审核时将重点确认，可能无法发布；在架期间进入 10 天内会自动转入临期优先流转。`)
     else if (d <= EXPIRY_WARN_DAYS) warnings.push(`距有效期不足 ${EXPIRY_WARN_DAYS} 天，借用页面会显著提示效期。`)
   }
   if (!draft.location.trim()) errors.push('请填写取用地点（如 3号楼1单元门口共享柜）。')
@@ -180,4 +235,10 @@ export const STOCK_LOCKING_STATUSES: RequestStatus[] = ['confirmed', 'handing', 
 
 export function isTerminalItemStatus(status: ItemStatus): boolean {
   return status === 'rejected' || status === 'recalled' || status === 'scrapped'
+}
+
+/** 是否进入临期优先流转区间（0 ≤ 剩余天数 ≤ EXPIRY_PRIORITY_DAYS） */
+export function isNearExpiry(expiryDate: string, now: string | Date): boolean {
+  const d = daysUntil(expiryDate, now)
+  return d >= 0 && d <= EXPIRY_PRIORITY_DAYS
 }

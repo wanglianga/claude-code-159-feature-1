@@ -26,10 +26,18 @@ temp/
 *.log
 *.sqlite
 *.db
-*screenshot*
-*screen-capture*
-*recording*
-*trace*
-*debug*
-*temp*
-*tmp*
+# 例外：大小写不敏感文件系统下 *temp* 会误匹配 RegisterItemPage 中的 "ItemP" 片段
+!src/pages/RegisterItemPage.vue
+.local/*.tar
+.local/*.tar.gz
+.local/*.tgz
+.local/*.zip
+.local/*.7z
+*screenshot*.png
+*screenshot*.jpg
+*screenshot*.jpeg
+*screen-capture*.png
+*screen-capture*.jpg
+*recording*.webm
+*recording*.mp4
+*trace*.jsonl

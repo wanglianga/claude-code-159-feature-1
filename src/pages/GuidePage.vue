@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import SafetyBanner from '@/components/SafetyBanner.vue'
-import { CLOSE_MODE_LABELS, DELIVERY_SLA_HOURS, EXPIRY_DANGER_DAYS, EXPIRY_WARN_DAYS, PICKUP_WINDOW_HOURS } from '@/rules'
+import {
+  CLOSE_MODE_LABELS,
+  DELIVERY_SLA_HOURS,
+  EXPIRY_DANGER_DAYS,
+  EXPIRY_PRIORITY_DAYS,
+  EXPIRY_WARN_DAYS,
+  NEAR_EXPIRY_FOLLOWUP_HOURS,
+  NEAR_EXPIRY_OWNER_NOTICE_DAYS,
+  PICKUP_WINDOW_HOURS,
+} from '@/rules'
 </script>
 
 <template>
@@ -30,9 +39,18 @@ import { CLOSE_MODE_LABELS, DELIVERY_SLA_HOURS, EXPIRY_DANGER_DAYS, EXPIRY_WARN_
     <h3>三、借用前必须看到的四件事</h3>
     <ol>
       <li><strong>来源</strong>：哪位邻居共享、哪位志愿者审核；社区仅做流转记录。</li>
-      <li><strong>效期</strong>：明确有效期；{{ EXPIRY_WARN_DAYS }} 天内黄色提示、{{ EXPIRY_DANGER_DAYS }} 天内红色提示，过期物品大厅自动禁借。</li>
+      <li><strong>效期</strong>：明确有效期；{{ EXPIRY_WARN_DAYS }} 天内黄色提示、{{ EXPIRY_DANGER_DAYS }} 天内红色提示、<strong>{{ EXPIRY_PRIORITY_DAYS }} 天内进入“临期优先流转”</strong>，过期物品大厅自动禁借。</li>
       <li><strong>包装状态</strong>：整盒/整包未开封、封签完好；交接时当场检查，破损立即拒收并拍照反馈。</li>
       <li><strong>适用限制</strong>：仅用于对应场景临时辅助（物理降温、浅表小伤口、口罩应急、护理耗材周转），不替代就医。</li>
+    </ol>
+
+    <h3>三（补）、临期物品（≤{{ EXPIRY_PRIORITY_DAYS }} 天）怎么优先流转</h3>
+    <ol>
+      <li><strong>工作人员清单盯办</strong>：到期前 {{ EXPIRY_PRIORITY_DAYS }} 天自动进入社区工作台“临期优先流转”清单，写明<strong>可使用场景</strong>与<strong>建议优先推荐范围</strong>（登记过急用场景的家庭、同场景候补邻居、24–48 小时内确定要用的人；不推荐“先囤着”）。</li>
+      <li><strong>有人借用</strong>：交接页用红字标明到期日，借用人必须逐项勾选<strong>核对效期 → 检查封签 → 检查外观（受潮/变色/渗漏/破损/异味）→ 承诺到期日前使用</strong>，确认记录连同交接照片一并留痕；志愿者代送时当面核对，记录仍记在借用人名下。</li>
+      <li><strong>借出后回访</strong>：交接完成即约定 {{ NEAR_EXPIRY_FOLLOWUP_HOURS }} 小时后回访，系统提醒借用人反馈<strong>是否使用、是否剩余、是否需要社区回收</strong>；逾期未反馈工作人员电话催收并可代登记。</li>
+      <li><strong>剩余回收</strong>：未用完/未使用的未拆封剩余，可约志愿者上门取或自行送到共享柜，工作人员确认回收后闭环，<strong>回收物品不再流通</strong>；已全部使用则回访后自动核销。</li>
+      <li><strong>无人借用</strong>：到期前 {{ NEAR_EXPIRY_OWNER_NOTICE_DAYS }} 天仍无借用/候补，系统提醒共享人<strong>取回在到期日前自行使用，或交社区报废</strong>，避免过期滞留在共享柜。</li>
     </ol>
 
     <h3>四、一次借用是怎么连起来的</h3>
@@ -48,7 +66,7 @@ import { CLOSE_MODE_LABELS, DELIVERY_SLA_HOURS, EXPIRY_DANGER_DAYS, EXPIRY_WARN_
     <h3>五、异常情况怎么处理</h3>
     <dl class="kv" style="grid-template-columns: 150px 1fr">
       <dt>效期临近</dt>
-      <dd>60/30 天分级提示，工作人员可提醒共享人优先流转；过期即自动禁借并等待报废。</dd>
+      <dd>60/30 天分级提示；≤{{ EXPIRY_PRIORITY_DAYS }} 天进入临期优先流转：工作人员按场景定向推荐、交接强制使用前检查确认、借出后 {{ NEAR_EXPIRY_FOLLOWUP_HOURS }} 小时回访使用/剩余/回收；无人借用于到期前 {{ NEAR_EXPIRY_OWNER_NOTICE_DAYS }} 天提醒共享人取回或报废；过期即自动禁借并等待报废。</dd>
       <dt>多人同时申请</dt>
       <dd>确认时锁定库存，余量不足进入候补队列；取消或归还后按顺序递补。</dd>
       <dt>迟迟未取</dt>

@@ -7,15 +7,28 @@ import type {
   HandoverMethod,
   Item,
   ItemDraft,
+  NearExpiryAck,
   RequestStatus,
   Scene,
   TimelineEvent,
+  UseFeedback,
+  UseFeedbackUsed,
 } from '@/types'
-import { DELIVERY_SLA_HOURS, PICKUP_WINDOW_HOURS, STOCK_LOCKING_STATUSES, validateDraft } from '@/rules'
+import {
+  DELIVERY_SLA_HOURS,
+  EXPIRY_PRIORITY_DAYS,
+  NEAR_EXPIRY_FOLLOWUP_GRACE_HOURS,
+  NEAR_EXPIRY_FOLLOWUP_HOURS,
+  NEAR_EXPIRY_OWNER_NOTICE_DAYS,
+  PICKUP_WINDOW_HOURS,
+  STOCK_LOCKING_STATUSES,
+  isNearExpiry,
+  validateDraft,
+} from '@/rules'
 import { addHours, daysUntil, hoursSince } from '@/utils/date'
-import { BASE_NOW, DEMO_USERS, freshState, uid } from '@/data/seed'
+import { BASE_NOW, DEMO_USERS, freshState, rebuildTimeline, uid } from '@/data/seed'
 
-const STORAGE_KEY = 'medkit-share-state-v1'
+const STORAGE_KEY = 'medkit-share-state-v2'
 
 interface PersistShape {
   nowIso: string
@@ -23,6 +36,7 @@ interface PersistShape {
   items: Item[]
   requests: BorrowRequest[]
   feedbacks: Feedback[]
+  useFeedbacks: UseFeedback[]
   timeline: TimelineEvent[]
 }
 
@@ -34,15 +48,24 @@ interface ActionResult {
 export class ActionError extends Error {}
 
 function load(): PersistShape | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    const data = JSON.parse(raw) as PersistShape
-    if (!Array.isArray(data.items) || !Array.isArray(data.requests)) return null
-    return data
-  } catch {
-    return null
+  // 优先读 v2；v1 旧演示数据做一次结构迁移（补 useFeedbacks 并按快照重建时间线）
+  for (const key of [STORAGE_KEY, 'medkit-share-state-v1']) {
+    try {
+      const raw = localStorage.getItem(key)
+      if (!raw) continue
+      const data = JSON.parse(raw) as PersistShape
+      if (!Array.isArray(data.items) || !Array.isArray(data.requests)) continue
+      if (!Array.isArray(data.useFeedbacks)) data.useFeedbacks = []
+      if (!Array.isArray(data.feedbacks)) data.feedbacks = []
+      if (key === 'medkit-share-state-v1' || !Array.isArray(data.timeline)) {
+        data.timeline = rebuildTimeline(data.items, data.requests, data.feedbacks, data.useFeedbacks)
+      }
+      return data
+    } catch {
+      // 损坏数据忽略，落到种子数据
+    }
   }
+  return null
 }
 
 export const useMedkitStore = defineStore('medkit', () => {
@@ -54,6 +77,7 @@ export const useMedkitStore = defineStore('medkit', () => {
   const items = ref<Item[]>(seed.items)
   const requests = ref<BorrowRequest[]>(seed.requests)
   const feedbacks = ref<Feedback[]>(seed.feedbacks)
+  const useFeedbacks = ref<UseFeedback[]>(seed.useFeedbacks)
   const timeline = ref<TimelineEvent[]>(seed.timeline)
 
   function persist() {
@@ -63,6 +87,7 @@ export const useMedkitStore = defineStore('medkit', () => {
       items: items.value,
       requests: requests.value,
       feedbacks: feedbacks.value,
+      useFeedbacks: useFeedbacks.value,
       timeline: timeline.value,
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
@@ -82,6 +107,7 @@ export const useMedkitStore = defineStore('medkit', () => {
     items.value = f.items
     requests.value = f.requests
     feedbacks.value = f.feedbacks
+    useFeedbacks.value = f.useFeedbacks
     timeline.value = f.timeline
     nowIso.value = BASE_NOW
     currentUserId.value = 'u_b'
@@ -123,8 +149,10 @@ export const useMedkitStore = defineStore('medkit', () => {
     if (!it) return
     if (it.status !== 'published' && it.status !== 'partially_lent' && it.status !== 'lent_out') return
     const locked = lockedQty(itemId)
-    if (locked <= 0) it.status = 'published'
-    else if (locked < it.quantity) it.status = 'partially_lent'
+    if (locked <= 0) {
+      // 数量已核销完（赠予/社区回收）且无在途借用：保持“借完”，不以 0 余量回到大厅可借列表
+      it.status = it.quantity <= 0 ? 'lent_out' : 'published'
+    } else if (locked < it.quantity) it.status = 'partially_lent'
     else it.status = 'lent_out'
   }
 
@@ -300,20 +328,70 @@ export const useMedkitStore = defineStore('medkit', () => {
     return { ok: true, message: detail }
   }
 
-  function completeHandover(requestId: string, photo: string, note?: string): ActionResult {
+  /** 临期交接确认输入（借用人逐项确认效期与使用前检查） */
+  interface AckInput {
+    expiryConfirmed: boolean
+    sealConfirmed: boolean
+    appearanceConfirmed: boolean
+    withinDateUse: boolean
+  }
+
+  function completeHandover(requestId: string, photo: string, note?: string, ackInput?: AckInput): ActionResult {
     const r = requests.value.find((x) => x.id === requestId)
     if (!r) return { ok: false, message: '申请不存在。' }
     if (r.status !== 'handing') return { ok: false, message: '交接尚未开始。' }
     if (!photo.trim()) return { ok: false, message: '请先拍照上传交接凭证再确认。' }
     const it = requireItem(r.itemId)
     if (it.status === 'quarantined') return { ok: false, message: '物品已被风险隔离，不能完成交接。' }
+
+    const near = isNearExpiry(it.expiryDate, nowIso.value)
+    let ack: NearExpiryAck | undefined
+    if (near) {
+      if (!ackInput) return { ok: false, message: '该物品已进入临期优先流转期，须由借用人逐项确认效期与使用前检查后才能完成交接。' }
+      if (!(ackInput.expiryConfirmed && ackInput.sealConfirmed && ackInput.appearanceConfirmed && ackInput.withinDateUse)) {
+        return { ok: false, message: '请让借用人逐项勾选：核对效期、检查封签、检查外观、到期日前使用；任一项不满足请当场拒收。' }
+      }
+      ack = reactive({
+        at: nowIso.value,
+        actorId: r.applicantId,
+        actorName: r.applicantName,
+        submittedBy: currentUserId.value === r.applicantId ? undefined : `${currentUser.value.name}${r.method === 'volunteer_delivery' ? '代送当面核验后代提交' : '代为确认'}`,
+        expiryConfirmed: true,
+        sealConfirmed: true,
+        appearanceConfirmed: true,
+        withinDateUse: true,
+        statement: '已核对到期日、封签与外观完好，承诺到期日前使用，到期后不再使用。',
+      })
+    }
+
     r.status = 'completed'
     r.completedAt = nowIso.value
     r.handoverPhoto = photo
     r.handoverNote = note
+    if (near && ack) {
+      r.nearExpiry = true
+      r.nearExpiryAck = ack
+      r.followUpAt = addHours(nowIso.value, NEAR_EXPIRY_FOLLOWUP_HOURS)
+    }
     addEvent({ itemId: r.itemId, requestId: r.id, at: nowIso.value, actorId: currentUserId.value, actorName: currentUser.value.name, kind: 'handover_confirmed', detail: `交接拍照确认：${note ?? '包装外观完好'}` })
+    if (near && ack) {
+      addEvent({
+        itemId: r.itemId,
+        requestId: r.id,
+        at: nowIso.value,
+        actorId: r.applicantId,
+        actorName: r.applicantName,
+        kind: 'near_expiry_ack',
+        detail: `临期交接：借用人逐项确认效期与使用前检查（到期日 ${it.expiryDate}，剩 ${daysUntil(it.expiryDate, nowIso.value)} 天）${ack.submittedBy ? `；${ack.submittedBy}` : ''}；约定 ${NEAR_EXPIRY_FOLLOWUP_HOURS} 小时内回访使用情况`,
+      })
+    }
     persist()
-    return { ok: true, message: '交接完成。请按约定归还或补充。' }
+    return {
+      ok: true,
+      message: near
+        ? `交接完成，临期使用前检查确认已留痕。该物品剩 ${daysUntil(it.expiryDate, nowIso.value)} 天到期，系统将于 ${NEAR_EXPIRY_FOLLOWUP_HOURS} 小时后提醒借用人回访反馈是否使用、是否剩余、是否需要社区回收。`
+        : '交接完成。请按约定归还或补充。',
+    }
   }
 
   /** 志愿者报备配送延误 */
@@ -358,7 +436,7 @@ export const useMedkitStore = defineStore('medkit', () => {
     return { ok: true, message: next ? `库存已释放，候补队列首位「${next.applicantName}」可确认递补。` : '申请已取消，库存已释放。' }
   }
 
-  // ---- 闭环：归还 / 补充 / 赠予 ----
+  // ---- 闭环：归还 / 补充 / 赠予 / 社区回收 ----
   function closeBorrow(requestId: string, mode: BorrowRequest['closeMode'], note?: string): ActionResult {
     const r = requests.value.find((x) => x.id === requestId)
     if (!r) return { ok: false, message: '申请不存在。' }
@@ -371,28 +449,175 @@ export const useMedkitStore = defineStore('medkit', () => {
 
     if (mode === 'restock_new') {
       it.quantity += r.quantity
-    } else if (mode === 'mutual_aid') {
+    } else if (mode === 'mutual_aid' || mode === 'community_recycle') {
+      // 赠予核销 / 社区回收剩余：余量不再回到流通库存
       it.quantity = Math.max(0, it.quantity - r.quantity)
     }
     // return_sealed：数量不变，申请离开锁定集合，余量自然恢复
     refreshItemStatus(r.itemId)
+
+    if (mode === 'community_recycle') {
+      // 同步闭环对应的使用回访回收单
+      const uf = useFeedbacks.value.find((x) => x.id === r.useFeedbackId)
+      if (uf && uf.needRecycle && !uf.resolvedAt) {
+        uf.resolvedAt = nowIso.value
+        uf.resolverId = currentUserId.value
+        uf.resolverName = currentUser.value.name
+        uf.resolveNote = note
+      }
+      addEvent({
+        itemId: r.itemId,
+        requestId: r.id,
+        at: nowIso.value,
+        actorId: currentUserId.value,
+        actorName: currentUser.value.name,
+        kind: 'recycled',
+        detail: `社区回收临期物品剩余 ×${r.quantity} 并闭环，不再回到流通${note ? `：${note}` : ''}`,
+      })
+    } else {
+      addEvent({
+        itemId: r.itemId,
+        requestId: r.id,
+        at: nowIso.value,
+        actorId: currentUserId.value,
+        actorName: currentUser.value.name,
+        kind: mode === 'restock_new' ? 'restocked' : 'returned',
+        detail:
+          mode === 'restock_new'
+            ? `已补充同规格新品 ×${r.quantity}${note ? `：${note}` : ''}`
+            : mode === 'mutual_aid'
+              ? `邻里赠予，无需归还（库存核销 ×${r.quantity}）`
+              : `已归还原物（未拆封）×${r.quantity}${note ? `：${note}` : ''}`,
+      })
+    }
+    persist()
+    if (mode === 'community_recycle') return { ok: true, message: '社区回收已完成，该笔临期借用闭环，剩余物品不再流通。' }
+    const next = waitingList(r.itemId)[0]
+    return { ok: true, message: next ? `本次借用已闭环，候补首位「${next.applicantName}」可递补。` : '本次借用已闭环，感谢你的守信与互助。' }
+  }
+
+  // ---- 临期物品借出后：使用回访 / 社区回收 ----
+  /** 借用人（或工作人员电话回访时代为）反馈：是否使用、是否剩余、是否需要社区回收 */
+  function submitUseFeedback(
+    requestId: string,
+    used: UseFeedbackUsed,
+    needRecycle: boolean,
+    recycleMethod?: UseFeedback['recycleMethod'],
+    note?: string,
+  ): ActionResult {
+    const r = requests.value.find((x) => x.id === requestId)
+    if (!r) return { ok: false, message: '申请不存在。' }
+    if (r.status !== 'completed') return { ok: false, message: '仅已取走、尚未闭环的临期借用需要回访反馈。' }
+    if (!r.nearExpiry) return { ok: false, message: '该笔借用不是临期物品，无需临期使用回访。' }
+    if (r.useFeedbackId) return { ok: false, message: '该笔借用已提交过回访反馈。' }
+    if (needRecycle && !recycleMethod) return { ok: false, message: '需要社区回收时，请选择回收方式（上门取 / 自行送到共享柜）。' }
+
+    const onBehalf = currentUserId.value !== r.applicantId && (isVolunteer.value || isStaff.value)
+    const uf: UseFeedback = reactive({
+      id: uid('uf'),
+      requestId: r.id,
+      itemId: r.itemId,
+      borrowerId: r.applicantId,
+      borrowerName: r.applicantName,
+      at: nowIso.value,
+      used,
+      needRecycle,
+      recycleMethod: needRecycle ? recycleMethod : undefined,
+      note: onBehalf ? `【${currentUser.value.name}电话回访代登记】${note ?? ''}`.trim() : note,
+    })
+    useFeedbacks.value.unshift(uf)
+    r.useFeedbackId = uf.id
+
+    const usedText = used === 'used' ? '已全部使用，无剩余' : used === 'partial' ? '用了一部分，还有剩余' : '完全未使用'
+    addEvent({
+      itemId: r.itemId,
+      requestId: r.id,
+      at: nowIso.value,
+      actorId: r.applicantId,
+      actorName: r.applicantName,
+      kind: 'use_feedback',
+      detail: `借出回访反馈：${usedText}；${needRecycle ? `需要社区回收（${recycleMethod === 'volunteer_pickup' ? '志愿者上门取' : '自行送到共享柜/居委会'}）` : '无需社区回收'}${uf.note ? `；${uf.note}` : ''}`,
+    })
+
+    // 已全部使用：无剩余、无回收，直接按赠予核销闭环，避免临期物品挂在个人名下
+    if (used === 'used' && !needRecycle) {
+      r.status = 'closed_returned'
+      r.closedAt = nowIso.value
+      r.closeMode = 'mutual_aid'
+      r.closeNote = '临期物品已全部使用，回访后自动核销'
+      const it = itemsById.value.get(r.itemId)
+      if (it) {
+        it.quantity = Math.max(0, it.quantity - r.quantity)
+        refreshItemStatus(it.id)
+      }
+      addEvent({ itemId: r.itemId, requestId: r.id, at: nowIso.value, actorId: currentUserId.value, actorName: currentUser.value.name, kind: 'returned', detail: '回访确认已全部使用，库存核销，借用闭环' })
+      persist()
+      return { ok: true, message: '回访已记录：已全部使用，该笔临期借用自动核销闭环。' }
+    }
+
+    persist()
+    return {
+      ok: true,
+      message: needRecycle
+        ? '回访已记录，已进入社区回收清单，工作人员会按你选择的方式安排回收。'
+        : '回访已记录。剩余未拆封部分请尽快走“归还原物/补充新品”闭环，到期日后不得继续使用。',
+    }
+  }
+
+  /** 工作人员完成社区回收闭环（剩余物品回收后不再流通） */
+  function resolveRecycle(feedbackId: string, note: string): ActionResult {
+    if (!isStaff.value) return { ok: false, message: '只有社区工作人员可以确认社区回收闭环。' }
+    const uf = useFeedbacks.value.find((x) => x.id === feedbackId)
+    if (!uf) return { ok: false, message: '回收记录不存在。' }
+    if (uf.resolvedAt) return { ok: false, message: '该回收记录已闭环。' }
+    const r = requests.value.find((x) => x.id === uf.requestId)
+    if (r && r.status === 'completed') {
+      return closeBorrow(r.id, 'community_recycle', note || '工作人员确认剩余物品已收回')
+    }
+    uf.resolvedAt = nowIso.value
+    uf.resolverId = currentUserId.value
+    uf.resolverName = currentUser.value.name
+    uf.resolveNote = note
+    addEvent({ itemId: uf.itemId, requestId: uf.requestId, at: nowIso.value, actorId: currentUserId.value, actorName: currentUser.value.name, kind: 'recycled', detail: `社区回收完成：${note}` })
+    persist()
+    return { ok: true, message: '社区回收已完成。' }
+  }
+
+  /** 工作人员/志愿者提醒共享人：临期物品无人借用，请取回或报废（留痕） */
+  function remindNearExpiryOwner(itemId: string): ActionResult {
+    if (!isVolunteer.value) return { ok: false, message: '只有志愿者或工作人员可以发起临期提醒。' }
+    const it = requireItem(itemId)
+    const d = daysUntil(it.expiryDate, nowIso.value)
+    addEvent({
+      itemId,
+      at: nowIso.value,
+      actorId: currentUserId.value,
+      actorName: currentUser.value.name,
+      kind: 'near_expiry_notified',
+      detail: `临期物品暂无人借用（剩 ${d} 天）：已提醒共享人 ${it.ownerName} 尽快取回自行使用，或交由社区按报废流程处理，避免过期后积压。`,
+    })
+    persist()
+    return { ok: true, message: `已提醒共享人 ${it.ownerName}：物品 ${d} 天后到期且暂无借用，请取回或交社区报废。` }
+  }
+
+  /** 工作人员/志愿者催办借用人提交使用回访（留痕） */
+  function remindFollowUp(requestId: string): ActionResult {
+    if (!isVolunteer.value) return { ok: false, message: '只有志愿者或工作人员可以催办回访。' }
+    const r = requests.value.find((x) => x.id === requestId)
+    if (!r) return { ok: false, message: '申请不存在。' }
+    if (!r.nearExpiry || r.status !== 'completed' || r.useFeedbackId) return { ok: false, message: '该申请不需要回访催办。' }
+    const it = itemsById.value.get(r.itemId)
     addEvent({
       itemId: r.itemId,
       requestId: r.id,
       at: nowIso.value,
       actorId: currentUserId.value,
       actorName: currentUser.value.name,
-      kind: mode === 'restock_new' ? 'restocked' : 'returned',
-      detail:
-        mode === 'restock_new'
-          ? `已补充同规格新品 ×${r.quantity}${note ? `：${note}` : ''}`
-          : mode === 'mutual_aid'
-            ? `邻里赠予，无需归还（库存核销 ×${r.quantity}）`
-            : `已归还原物（未拆封）×${r.quantity}${note ? `：${note}` : ''}`,
+      kind: 'near_expiry_notified',
+      detail: `临期借出回访催收：已提醒借用人 ${r.applicantName} 反馈是否使用、是否剩余、是否需要社区回收（物品 ${it?.name ?? ''}，${it ? daysUntil(it.expiryDate, nowIso.value) : '-'} 天后到期）`,
     })
     persist()
-    const next = waitingList(r.itemId)[0]
-    return { ok: true, message: next ? `本次借用已闭环，候补首位「${next.applicantName}」可递补。` : '本次借用已闭环，感谢你的守信与互助。' }
+    return { ok: true, message: `已催办借用人 ${r.applicantName} 尽快反馈使用/剩余/回收情况。` }
   }
 
   // ---- 共享人撤回 ----
@@ -528,6 +753,99 @@ export const useMedkitStore = defineStore('medkit', () => {
       .sort((a, b) => a.days - b.days),
   )
 
+  // ---- 临期优先流转（≤10 天）----
+  interface NearExpiryRow {
+    item: Item
+    days: number
+    available: number
+    waitingCount: number
+    /** 已临期借出、尚未闭环的申请（completed：等回访 / 已回访待回收） */
+    lentRequests: BorrowRequest[]
+    /** 是否无人借用：没有锁定库存中的借用，也没有候补 */
+    noBorrower: boolean
+    /** 是否到了提醒共享人取回或报废的时点（≤ NEAR_EXPIRY_OWNER_NOTICE_DAYS 天且无人借用） */
+    ownerNoticeDue: boolean
+    /** 建议优先推荐的候补邻居：本物品候补 + 同场景在别处候补且取不到的人 */
+    candidates: { req: BorrowRequest; item: Item }[]
+  }
+
+  /** 工作人员“临期优先流转”清单：≤10 天到期、仍有存量且仍在流转的物品，附场景/推荐范围/盯办状态 */
+  const nearExpiryList = computed<NearExpiryRow[]>(() => {
+    const active = items.value.filter((i) => ['published', 'partially_lent', 'lent_out'].includes(i.status) && i.quantity > 0)
+    return active
+      .map((item) => {
+        const days = daysUntil(item.expiryDate, nowIso.value)
+        const lentRequests = requests.value.filter(
+          (r) => r.itemId === item.id && ['confirmed', 'handing', 'completed'].includes(r.status),
+        )
+        const itemWaiting = waitingList(item.id)
+        // 同场景、在别的物品处候补且该物品已无余量的邻居，可优先推荐这件临期品
+        const candidates = itemWaiting
+          .map((req) => ({ req, item }))
+          .concat(
+            requests.value
+              .filter(
+                (r) =>
+                  r.status === 'waiting' &&
+                  r.itemId !== item.id &&
+                  item.sceneTags.includes(r.scene) &&
+                  availableQty(r.itemId) === 0,
+              )
+              .map((req) => ({ req, item: itemsById.value.get(req.itemId) ?? item })),
+          )
+        const noBorrower = lockedList(item.id).length === 0 && itemWaiting.length === 0
+        return {
+          item,
+          days,
+          available: availableQty(item.id),
+          waitingCount: itemWaiting.length,
+          lentRequests,
+          noBorrower,
+          ownerNoticeDue: noBorrower && days <= NEAR_EXPIRY_OWNER_NOTICE_DAYS,
+          candidates,
+        }
+      })
+      .filter((x) => x.days >= 0 && x.days <= EXPIRY_PRIORITY_DAYS)
+      .sort((a, b) => a.days - b.days)
+  })
+
+  interface FollowUpRow {
+    req: BorrowRequest
+    item?: Item
+    /** 距约定回访时间的小时数（负=已逾期） */
+    hoursToDue: number
+    overdue: boolean
+    feedback?: UseFeedback
+  }
+
+  /** 临期借出后的回访队列：约定时间到未反馈的；overdue 表示超过宽限期仍未反馈 */
+  const followUpQueue = computed<FollowUpRow[]>(() =>
+    requests.value
+      .filter((r) => r.nearExpiry && r.followUpAt && r.status === 'completed' && !r.useFeedbackId)
+      .map((r) => {
+        const hoursToDue = -hoursSince(r.followUpAt!, nowIso.value)
+        return {
+          req: r,
+          item: itemsById.value.get(r.itemId),
+          hoursToDue,
+          overdue: -hoursToDue > NEAR_EXPIRY_FOLLOWUP_GRACE_HOURS,
+        }
+      })
+      .sort((a, b) => a.hoursToDue - b.hoursToDue),
+  )
+
+  /** 待社区回收：借用人回访表示需要回收、尚未闭环的记录 */
+  const recycleQueue = computed(() =>
+    useFeedbacks.value
+      .filter((uf) => uf.needRecycle && !uf.resolvedAt)
+      .map((uf) => ({ uf, req: requests.value.find((r) => r.id === uf.requestId), item: itemsById.value.get(uf.itemId) })),
+  )
+
+  function useFeedbackOf(requestId?: string): UseFeedback | undefined {
+    if (!requestId) return undefined
+    return useFeedbacks.value.find((uf) => uf.id === requestId)
+  }
+
   interface OverduePickup {
     req: BorrowRequest
     hours: number
@@ -566,6 +884,11 @@ export const useMedkitStore = defineStore('medkit', () => {
       expired: expiredListed.value.length,
       quarantined: items.value.filter((i) => i.status === 'quarantined').length,
       scrapped: items.value.filter((i) => i.status === 'scrapped').length,
+      nearExpiry: nearExpiryList.value.length,
+      nearExpiryNoBorrower: nearExpiryList.value.filter((x) => x.noBorrower).length,
+      followUpDue: followUpQueue.value.length,
+      followUpOverdue: followUpQueue.value.filter((x) => x.overdue).length,
+      recyclePending: recycleQueue.value.length,
     }
   })
 
@@ -584,6 +907,7 @@ export const useMedkitStore = defineStore('medkit', () => {
     items,
     requests,
     feedbacks,
+    useFeedbacks,
     timeline,
     // getters
     currentUser,
@@ -593,6 +917,9 @@ export const useMedkitStore = defineStore('medkit', () => {
     openFeedbackList,
     expiredListed,
     expiringSoon,
+    nearExpiryList,
+    followUpQueue,
+    recycleQueue,
     overduePickups,
     delayedDeliveries,
     stats,
@@ -620,6 +947,11 @@ export const useMedkitStore = defineStore('medkit', () => {
     reportFeedback,
     resolveFeedback,
     scrapItem,
+    submitUseFeedback,
+    resolveRecycle,
+    remindNearExpiryOwner,
+    remindFollowUp,
+    useFeedbackOf,
     itemTimeline,
     itemRequests,
   }

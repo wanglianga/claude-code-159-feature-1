@@ -13,6 +13,7 @@ import {
   STORAGE_LABELS,
 } from '@/rules'
 import { daysUntil } from '@/utils/date'
+import { isNearExpiry } from '@/rules'
 import type { FeedbackType, HandoverMethod, Scene } from '@/types'
 import SafetyBanner from '@/components/SafetyBanner.vue'
 import ExpiryBadge from '@/components/ExpiryBadge.vue'
@@ -43,6 +44,7 @@ const agreed = reactive({ source: false, expiry: false, package: false, limit: f
 const agreeAll = computed(() => agreed.source && agreed.expiry && agreed.package && agreed.limit)
 
 const expired = computed(() => (item.value ? daysUntil(item.value.expiryDate, store.nowIso) < 0 : false))
+const near = computed(() => (item.value ? isNearExpiry(item.value.expiryDate, store.nowIso) : false))
 const blocked = computed(() => !item.value || ['rejected', 'recalled', 'scrapped', 'quarantined', 'pending_review'].includes(item.value.status))
 
 function openApply() {
@@ -93,6 +95,11 @@ function submitFeedback() {
     <div v-if="expired" class="banner banner-danger">
       <strong>该物品已过有效期，禁止借用与交接。</strong>
       系统已提示社区工作人员尽快报废，请选择其他在效期内的物品。
+    </div>
+    <div v-else-if="near && !blocked" class="banner banner-danger">
+      <strong>🔖 该物品处于临期优先流转期（{{ item.expiryDate }} 到期，剩 {{ daysUntil(item.expiryDate, store.nowIso) }} 天）。</strong>
+      请确认你<strong>近期确定会使用</strong>再申领（如夜间发热、近日就医陪诊、约定换药），不要囤放；
+      交接时必须逐项核对效期、封签与外观并确认；借出后请在约定时间反馈是否使用、是否剩余、是否需要社区回收。到期当日及之后不得使用。
     </div>
     <div v-if="item.status === 'quarantined'" class="banner banner-danger">
       <strong>该物品因风险反馈已被隔离，暂停一切借用与交接。</strong>

@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMedkitStore } from '@/stores/medkit'
 import { useFlash } from '@/composables/useFlash'
-import { CATEGORY_ICONS, METHOD_LABELS, SCENE_LABELS } from '@/rules'
+import { CATEGORY_ICONS, METHOD_LABELS, SCENE_LABELS, isNearExpiry } from '@/rules'
 import SafetyBanner from '@/components/SafetyBanner.vue'
 import ItemStatusBadge from '@/components/ItemStatusBadge.vue'
 import RequestStatusBadge from '@/components/RequestStatusBadge.vue'
 import PhotoCapture from '@/components/PhotoCapture.vue'
-import { fmtDateTime } from '@/utils/date'
+import NearExpiryAckPanel from '@/components/NearExpiryAckPanel.vue'
+import { daysUntil, fmtDateTime } from '@/utils/date'
 
 const store = useMedkitStore()
 const router = useRouter()
@@ -28,12 +29,22 @@ const incoming = computed(() =>
 )
 
 const photos = ref<Record<string, string>>({})
+const acks = reactive<Record<string, { expiryConfirmed: boolean; sealConfirmed: boolean; appearanceConfirmed: boolean; withinDateUse: boolean }>>({})
+function ackOf(id: string) {
+  if (!acks[id]) acks[id] = { expiryConfirmed: false, sealConfirmed: false, appearanceConfirmed: false, withinDateUse: false }
+  return acks[id]
+}
 
-function itemName(id: string) {
-  return store.items.find((i) => i.id === id)?.name ?? id
+function itemOf(id: string) {
+  return store.items.find((i) => i.id === id)
 }
 function available(id: string) {
   return store.availableQty(id)
+}
+/** 社区发来的最近一条临期提醒（取回/报废/回访催收） */
+function ownerNotice(itemId: string): string | undefined {
+  const ev = store.itemTimeline(itemId).find((e) => e.kind === 'near_expiry_notified')
+  return ev ? `${fmtDateTime(ev.at)} · ${ev.actorName}：${ev.detail ?? ''}` : undefined
 }
 
 function confirmReq(id: string) {
@@ -45,7 +56,18 @@ function startHandover(id: string) {
   show(r.message, r.ok ? 'ok' : 'err')
 }
 function completeHandover(id: string) {
-  const r = store.completeHandover(id, photos.value[id] ?? '', '交接现场拍照确认')
+  const r0 = store.requests.find((x) => x.id === id)
+  const it = r0 ? itemOf(r0.itemId) : undefined
+  const near = !!it && isNearExpiry(it.expiryDate, store.nowIso)
+  const a = ackOf(id)
+  const r = store.completeHandover(
+    id,
+    photos.value[id] ?? '',
+    '交接现场拍照确认',
+    near
+      ? { expiryConfirmed: a.expiryConfirmed, sealConfirmed: a.sealConfirmed, appearanceConfirmed: a.appearanceConfirmed, withinDateUse: a.withinDateUse }
+      : undefined,
+  )
   show(r.message, r.ok ? 'ok' : 'err')
 }
 function cancelReq(id: string) {
@@ -60,6 +82,11 @@ function recall(id: string) {
   const r = store.recallItem(id, reason || '共享人主动撤回')
   show(r.message, r.ok ? 'ok' : 'err')
 }
+/** 共享人自行取回临期物品：撤回并按指引处理 */
+function takeBack(id: string) {
+  const r = store.recallItem(id, '临期无人借用，共享人自行取回，在到期日前使用或按有害/医疗垃圾处理')
+  show(r.message, r.ok ? 'ok' : 'err')
+}
 </script>
 
 <template>
@@ -67,7 +94,7 @@ function recall(id: string) {
 
   <div class="card">
     <h2 style="margin-bottom: 4px">我的共享</h2>
-    <div class="muted">登记、审核进度、借出余量、交接与归还记录在这里连在一起。</div>
+    <div class="muted">登记、审核进度、借出余量、交接与归还记录在这里连在一起。临期物品请配合社区优先流转、到期前取回。</div>
     <div class="tabs" style="margin-top: 12px">
       <button class="chip" :class="{ active: tab === 'items' }" @click="tab = 'items'">我登记的物品（{{ myItems.length }}）</button>
       <button class="chip" :class="{ active: tab === 'requests' }" @click="tab = 'requests'">待我处理的借用申请（{{ incoming.length }}）</button>
@@ -83,6 +110,7 @@ function recall(id: string) {
         <div>
           <strong>{{ CATEGORY_ICONS[it.category] }} {{ it.name }}</strong>
           <span class="muted"> · {{ it.spec }} · 总量 {{ it.quantity }} · 可借 {{ available(it.id) }}</span>
+          <span v-if="['published', 'partially_lent', 'lent_out'].includes(it.status) && daysUntil(it.expiryDate, store.nowIso) >= 0 && daysUntil(it.expiryDate, store.nowIso) <= 10" class="badge badge-red" style="margin-left: 6px">临期剩 {{ daysUntil(it.expiryDate, store.nowIso) }} 天</span>
         </div>
         <ItemStatusBadge :status="it.status" />
       </div>
@@ -92,11 +120,24 @@ function recall(id: string) {
       <div v-if="it.status === 'rejected'" class="banner banner-danger" style="margin-top: 8px">
         审核未通过：{{ it.review?.reason || it.closeReason || '不符合共享范围' }}
       </div>
+      <!-- 临期优先流转：社区提醒取回/报废 -->
+      <div v-if="['published', 'partially_lent', 'lent_out'].includes(it.status) && isNearExpiry(it.expiryDate, store.nowIso)" class="banner banner-warn" style="margin-top: 8px">
+        <strong>🔖 该物品已进入临期优先流转期（{{ it.expiryDate }} 到期）。</strong>
+        社区会优先推荐给近期确定要用的邻居；若无人借用，请你<strong>取回在到期日前自行使用</strong>，或交社区按报废流程处理，<strong>不要让它过期后留在共享柜或邻居家中</strong>。
+        <div v-if="ownerNotice(it.id)" class="muted" style="margin-top: 4px">📣 {{ ownerNotice(it.id) }}</div>
+      </div>
       <div v-if="it.closeReason && ['quarantined', 'recalled', 'scrapped'].includes(it.status)" class="banner banner-info" style="margin-top: 8px">
         {{ it.closeReason }}
       </div>
       <div class="card-actions">
         <button class="btn btn-sm" @click="router.push(`/items/${it.id}`)">查看全流程记录</button>
+        <button
+          v-if="['published', 'partially_lent'].includes(it.status) && isNearExpiry(it.expiryDate, store.nowIso)"
+          class="btn btn-sm btn-warn"
+          @click="takeBack(it.id)"
+        >
+          无人借用，我取回自行处理
+        </button>
         <button
           v-if="!['recalled', 'scrapped', 'rejected'].includes(it.status)"
           class="btn btn-sm btn-danger"
@@ -112,7 +153,7 @@ function recall(id: string) {
     <div v-if="!incoming.length" class="card empty">目前没有需要你处理的申请。</div>
     <div v-for="r in incoming" :key="r.id" class="card">
       <div style="display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap">
-        <strong>{{ itemName(r.itemId) }} × {{ r.quantity }}</strong>
+        <strong>{{ itemOf(r.itemId)?.name ?? r.itemId }} × {{ r.quantity }}</strong>
         <RequestStatusBadge :status="r.status" />
       </div>
       <div class="muted" style="margin: 6px 0">
@@ -130,6 +171,9 @@ function recall(id: string) {
       </div>
 
       <template v-else-if="r.status === 'confirmed'">
+        <div v-if="itemOf(r.itemId) && isNearExpiry(itemOf(r.itemId)!.expiryDate, store.nowIso)" class="banner banner-warn" style="margin-top: 8px">
+          🔖 临期物品：交接时请与借用人<strong>当面逐项核对效期、封签与外观</strong>，由借用人确认后再完成交接。
+        </div>
         <div class="banner banner-info" style="margin-top: 8px">已确认，请在 24 小时内完成交接；逾期未取系统会标红提醒。</div>
         <div class="card-actions">
           <button class="btn btn-primary btn-sm" @click="startHandover(r.id)">
@@ -140,10 +184,20 @@ function recall(id: string) {
       </template>
 
       <template v-else>
+        <NearExpiryAckPanel v-if="itemOf(r.itemId) && isNearExpiry(itemOf(r.itemId)!.expiryDate, store.nowIso)" :model-value="ackOf(r.id)" @update:model-value="(v) => Object.assign(ackOf(r.id), v)" :item="itemOf(r.itemId)!" :now="store.nowIso" />
+        <div v-if="itemOf(r.itemId) && isNearExpiry(itemOf(r.itemId)!.expiryDate, store.nowIso)" class="muted" style="margin: -4px 0 8px">
+          你正在代借用人 {{ r.applicantName }} 操作，确认记录仍记在借用人名下；无接触交接请通过留言/电话先与对方逐项核对。
+        </div>
         <div class="banner banner-info" style="margin-top: 8px">交接进行中，完成后请由取件人拍照确认（双方均可上传）。</div>
         <PhotoCapture @captured="(p) => (photos[r.id] = p)" />
         <div class="card-actions">
-          <button class="btn btn-primary btn-sm" :disabled="!photos[r.id]" @click="completeHandover(r.id)">凭照片确认交接完成</button>
+          <button
+            class="btn btn-primary btn-sm"
+            :disabled="!photos[r.id] || (!!itemOf(r.itemId) && isNearExpiry(itemOf(r.itemId)!.expiryDate, store.nowIso) && !(ackOf(r.id).expiryConfirmed && ackOf(r.id).sealConfirmed && ackOf(r.id).appearanceConfirmed && ackOf(r.id).withinDateUse))"
+            @click="completeHandover(r.id)"
+          >
+            凭照片{{ itemOf(r.itemId) && isNearExpiry(itemOf(r.itemId)!.expiryDate, store.nowIso) ? '与借用人临期逐项确认' : '' }}确认交接完成
+          </button>
         </div>
       </template>
     </div>

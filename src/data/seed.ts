@@ -1,5 +1,5 @@
 // 演示用户：居民 / 志愿者 / 社区工作人员
-import type { BorrowRequest, DemoUser, Feedback, Item, TimelineEvent } from '@/types'
+import type { BorrowRequest, DemoUser, Feedback, Item, TimelineEvent, UseFeedback } from '@/types'
 import { addDays, addHours } from '@/utils/date'
 
 export type { DemoUser }
@@ -21,7 +21,7 @@ export function uid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${seq}_${Math.random().toString(36).slice(2, 6)}`
 }
 
-function buildSeed(now: string): { items: Item[]; requests: BorrowRequest[]; feedbacks: Feedback[] } {
+function buildSeed(now: string): { items: Item[]; requests: BorrowRequest[]; feedbacks: Feedback[]; useFeedbacks: UseFeedback[] } {
   const items: Item[] = [
     {
       id: 'i1',
@@ -235,6 +235,64 @@ function buildSeed(now: string): { items: Item[]; requests: BorrowRequest[]; fee
       createdAt: addDays(now, -200),
       publishedAt: addDays(now, -199),
     },
+    // ---- 临期优先流转专题种子 ----
+    {
+      // 题目主场景：王秀兰共享的退热贴还有 10 天到期
+      id: 'i13',
+      ownerId: 'u_a',
+      ownerName: '王秀兰',
+      name: '儿童退热贴（临期）',
+      category: 'fever_patch',
+      spec: '4贴/盒',
+      expiryDate: addDays(now, 10).slice(0, 10),
+      storage: 'cool_dry',
+      sealed: true,
+      quantity: 2,
+      location: '3号楼1单元一楼“邻里药箱”共享柜 A格',
+      sceneTags: ['child_night_fever'],
+      note: '还剩 10 天到期，夜间急用可先取一贴；请在到期日前使用，不要囤放。',
+      status: 'published',
+      createdAt: addDays(now, -30),
+      publishedAt: addDays(now, -29),
+    },
+    {
+      // 剩 3 天：1 盒已临期借出，借用人回访已逾期
+      id: 'i14',
+      ownerId: 'u_a',
+      ownerName: '王秀兰',
+      name: '碘伏棉签（独立包装）',
+      category: 'iodophor',
+      spec: '20支/盒',
+      expiryDate: addDays(now, 3).slice(0, 10),
+      storage: 'room_temp',
+      sealed: true,
+      quantity: 2,
+      location: '3号楼1单元一楼“邻里药箱”共享柜 A格',
+      sceneTags: ['elderly_wound', 'home_care'],
+      note: '临期优先流转：已借出 1 盒，剩余 1 盒请工作人员优先推荐。',
+      status: 'partially_lent',
+      createdAt: addDays(now, -20),
+      publishedAt: addDays(now, -19),
+    },
+    {
+      // 剩 6 天：已临期借出，借用人已回访反馈“未使用、需要社区回收”，待工作人员闭环
+      id: 'i15',
+      ownerId: 'u_c',
+      ownerName: '周敏',
+      name: '无菌纱布块（临期）',
+      category: 'gauze',
+      spec: '5片/袋（独立灭菌）',
+      expiryDate: addDays(now, 6).slice(0, 10),
+      storage: 'room_temp',
+      sealed: true,
+      quantity: 1,
+      location: '5号楼3单元门口便民架',
+      sceneTags: ['elderly_wound', 'home_care'],
+      note: '临期借出：借用人反馈未使用，约好自行送到居委会回收。',
+      status: 'lent_out',
+      createdAt: addDays(now, -15),
+      publishedAt: addDays(now, -14),
+    },
   ]
 
   const requests: BorrowRequest[] = [
@@ -322,6 +380,90 @@ function buildSeed(now: string): { items: Item[]; requests: BorrowRequest[]; fee
       volunteerId: 'u_v',
       volunteerName: '陈芳（志愿者）',
     },
+    // ---- 临期优先流转专题种子 ----
+    {
+      // i14：临期碘伏已借出，约定回访时间已过，借用人尚未反馈（看板红色催收）
+      id: 'r6',
+      itemId: 'i14',
+      applicantId: 'u_b',
+      applicantName: '李建国',
+      scene: 'elderly_wound',
+      quantity: 1,
+      method: 'self_pickup',
+      note: '老人换药应急，今天就会用。',
+      status: 'completed',
+      createdAt: addHours(now, -44),
+      confirmedAt: addHours(now, -43),
+      handingAt: addHours(now, -42),
+      completedAt: addHours(now, -40),
+      confirmerId: 'u_a',
+      confirmerName: '王秀兰',
+      handoverPhoto: 'handover-r6.jpg（演示凭证：共享柜取件自拍）',
+      handoverNote: '取件人已当面核对效期与封签。',
+      nearExpiry: true,
+      nearExpiryAck: {
+        at: addHours(now, -40),
+        actorId: 'u_b',
+        actorName: '李建国',
+        expiryConfirmed: true,
+        sealConfirmed: true,
+        appearanceConfirmed: true,
+        withinDateUse: true,
+        statement: '已核对到期日、封签与外观完好，承诺到期日前使用，到期后不再使用。',
+      },
+      followUpAt: addHours(now, -16),
+    },
+    {
+      // i15：临期纱布已借出，借用人已回访反馈“未使用+需要社区回收”，待工作人员闭环
+      id: 'r7',
+      itemId: 'i15',
+      applicantId: 'u_a',
+      applicantName: '王秀兰',
+      scene: 'home_care',
+      quantity: 1,
+      method: 'volunteer_delivery',
+      note: '家里护理临时备用。',
+      status: 'completed',
+      createdAt: addHours(now, -32),
+      confirmedAt: addHours(now, -31),
+      handingAt: addHours(now, -31),
+      completedAt: addHours(now, -30),
+      confirmerId: 'u_c',
+      confirmerName: '周敏',
+      volunteerId: 'u_v',
+      volunteerName: '陈芳（志愿者）',
+      handoverPhoto: 'handover-r7.jpg（演示凭证：志愿者送达拍照）',
+      handoverNote: '志愿者当面与借用人逐项核对效期和使用前检查。',
+      nearExpiry: true,
+      nearExpiryAck: {
+        at: addHours(now, -30),
+        actorId: 'u_a',
+        actorName: '王秀兰',
+        submittedBy: '陈芳（志愿者）代送当面核验后代提交',
+        expiryConfirmed: true,
+        sealConfirmed: true,
+        appearanceConfirmed: true,
+        withinDateUse: true,
+        statement: '已核对到期日、封签与外观完好，承诺到期日前使用，到期后不再使用。',
+      },
+      followUpAt: addHours(now, -6),
+      useFeedbackId: 'uf1',
+    },
+  ]
+
+  const useFeedbacks: UseFeedback[] = [
+    {
+      id: 'uf1',
+      requestId: 'r7',
+      itemId: 'i15',
+      borrowerId: 'u_a',
+      borrowerName: '王秀兰',
+      at: addHours(now, -5),
+      used: 'unused',
+      needRecycle: true,
+      recycleMethod: 'self_dropoff',
+      note: '后来没用上，包装完好未拆封，今晚散步时送到居委会回收箱。',
+    },
   ]
 
   const feedbacks: Feedback[] = [
@@ -348,11 +490,11 @@ function buildSeed(now: string): { items: Item[]; requests: BorrowRequest[]; fee
     },
   ]
 
-  return { items, requests, feedbacks }
+  return { items, requests, feedbacks, useFeedbacks }
 }
 
-/** 由物品/申请/反馈快照重建全流程时间线（种子数据与数据修复共用） */
-export function rebuildTimeline(items: Item[], requests: BorrowRequest[], feedbacks: Feedback[]): TimelineEvent[] {
+/** 由物品/申请/反馈/回访快照重建全流程时间线（种子数据与数据修复共用） */
+export function rebuildTimeline(items: Item[], requests: BorrowRequest[], feedbacks: Feedback[], useFeedbacks: UseFeedback[] = []): TimelineEvent[] {
   const events: TimelineEvent[] = []
   const push = (e: TimelineEvent) => events.push(e)
 
@@ -382,8 +524,15 @@ export function rebuildTimeline(items: Item[], requests: BorrowRequest[], feedba
     if (r.confirmedAt) push({ id: `${r.id}_confirm`, itemId: r.itemId, requestId: r.id, at: r.confirmedAt, actorId: r.confirmerId ?? 'u_v', actorName: r.confirmerName ?? '志愿者', kind: 'confirmed', detail: `确认申请并锁定库存 ×${r.quantity}` })
     if (r.handingAt) push({ id: `${r.id}_handing`, itemId: r.itemId, requestId: r.id, at: r.handingAt, actorId: r.volunteerId ?? r.confirmerId ?? 'u_v', actorName: r.volunteerName ?? r.confirmerName ?? '志愿者', kind: 'handover_started', detail: r.method === 'volunteer_delivery' ? '志愿者出发代送' : r.method === 'door_contactless' ? '已放到约定门口位置' : '物品已备好，等待自取' })
     if (r.completedAt) push({ id: `${r.id}_done`, itemId: r.itemId, requestId: r.id, at: r.completedAt, actorId: r.applicantId, actorName: r.applicantName, kind: 'handover_confirmed', detail: `交接拍照确认：${r.handoverPhoto ?? '已上传照片'}${r.handoverNote ? `；${r.handoverNote}` : ''}` })
+    if (r.nearExpiry && r.nearExpiryAck) {
+      push({ id: `${r.id}_nack`, itemId: r.itemId, requestId: r.id, at: r.nearExpiryAck.at, actorId: r.nearExpiryAck.actorId, actorName: r.nearExpiryAck.actorName, kind: 'near_expiry_ack', detail: `借用人逐项确认效期与使用前检查：${r.nearExpiryAck.statement}${r.nearExpiryAck.submittedBy ? `（${r.nearExpiryAck.submittedBy}）` : ''}` })
+    }
     if (r.status === 'closed_returned' && r.closedAt) {
-      push({ id: `${r.id}_close`, itemId: r.itemId, requestId: r.id, at: r.closedAt, actorId: r.applicantId, actorName: r.applicantName, kind: r.closeMode === 'restock_new' ? 'restocked' : 'returned', detail: r.closeMode === 'mutual_aid' ? '邻里赠予，无需归还' : r.closeMode === 'restock_new' ? '已补充同规格新品' : '已归还原物（未拆封）' })
+      if (r.closeMode === 'community_recycle') {
+        push({ id: `${r.id}_close`, itemId: r.itemId, requestId: r.id, at: r.closedAt, actorId: r.applicantId, actorName: r.applicantName, kind: 'recycled', detail: `社区回收剩余物品并闭环${r.closeNote ? `：${r.closeNote}` : ''}` })
+      } else {
+        push({ id: `${r.id}_close`, itemId: r.itemId, requestId: r.id, at: r.closedAt, actorId: r.applicantId, actorName: r.applicantName, kind: r.closeMode === 'restock_new' ? 'restocked' : 'returned', detail: r.closeMode === 'mutual_aid' ? '邻里赠予，无需归还' : r.closeMode === 'restock_new' ? '已补充同规格新品' : '已归还原物（未拆封）' })
+      }
     }
     if (r.status === 'cancelled') {
       push({ id: `${r.id}_cancel`, itemId: r.itemId, requestId: r.id, at: r.closedAt ?? r.createdAt, actorId: r.applicantId, actorName: r.applicantName, kind: 'cancelled', detail: r.cancelReason ?? '申请取消，库存释放' })
@@ -394,10 +543,27 @@ export function rebuildTimeline(items: Item[], requests: BorrowRequest[], feedba
     push({ id: `${f.id}_fb`, itemId: f.itemId, requestId: f.requestId, at: f.createdAt, actorId: f.reporterId, actorName: f.reporterName, kind: 'feedback', detail: `${f.type === 'package_damaged' ? '包装破损反馈' : f.type === 'adverse_reaction' ? '疑似不适反应反馈' : '其他反馈'}：${f.detail}` })
   }
 
+  for (const uf of useFeedbacks) {
+    const usedText = uf.used === 'used' ? '已全部使用，无剩余' : uf.used === 'partial' ? '用了一部分，还有剩余' : '完全未使用'
+    push({
+      id: `${uf.id}_ufb`,
+      itemId: uf.itemId,
+      requestId: uf.requestId,
+      at: uf.at,
+      actorId: uf.borrowerId,
+      actorName: uf.borrowerName,
+      kind: 'use_feedback',
+      detail: `借出回访反馈：${usedText}；${uf.needRecycle ? '需要社区回收' : '无需社区回收'}${uf.note ? `；${uf.note}` : ''}`,
+    })
+    if (uf.resolvedAt) {
+      push({ id: `${uf.id}_rec`, itemId: uf.itemId, requestId: uf.requestId, at: uf.resolvedAt, actorId: uf.resolverId ?? 'u_s', actorName: uf.resolverName ?? '社区工作人员', kind: 'recycled', detail: `社区回收完成：${uf.resolveNote ?? '剩余物品已收回处理'}` })
+    }
+  }
+
   return events.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
 }
 
 export function freshState(now: string) {
-  const { items, requests, feedbacks } = buildSeed(now)
-  return { items, requests, feedbacks, timeline: rebuildTimeline(items, requests, feedbacks) }
+  const { items, requests, feedbacks, useFeedbacks } = buildSeed(now)
+  return { items, requests, feedbacks, useFeedbacks, timeline: rebuildTimeline(items, requests, feedbacks, useFeedbacks) }
 }
