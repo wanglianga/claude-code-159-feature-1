@@ -3,12 +3,13 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMedkitStore } from '@/stores/medkit'
 import { useFlash } from '@/composables/useFlash'
-import { CATEGORY_ICONS, METHOD_LABELS, SCENE_LABELS } from '@/rules'
+import { CATEGORY_ICONS, isNearExpiry, METHOD_LABELS, OWNER_RETRIEVE_REMIND_DAYS, SCENE_LABELS } from '@/rules'
+import { daysUntil, fmtDateTime } from '@/utils/date'
 import SafetyBanner from '@/components/SafetyBanner.vue'
 import ItemStatusBadge from '@/components/ItemStatusBadge.vue'
 import RequestStatusBadge from '@/components/RequestStatusBadge.vue'
+import ExpiryBadge from '@/components/ExpiryBadge.vue'
 import PhotoCapture from '@/components/PhotoCapture.vue'
-import { fmtDateTime } from '@/utils/date'
 
 const store = useMedkitStore()
 const router = useRouter()
@@ -35,6 +36,10 @@ function itemName(id: string) {
 function available(id: string) {
   return store.availableQty(id)
 }
+function days(id: string) {
+  const it = store.items.find((i) => i.id === id)
+  return it ? daysUntil(it.expiryDate, store.nowIso) : 9999
+}
 
 function confirmReq(id: string) {
   const r = store.confirmRequest(id)
@@ -60,6 +65,13 @@ function recall(id: string) {
   const r = store.recallItem(id, reason || '共享人主动撤回')
   show(r.message, r.ok ? 'ok' : 'err')
 }
+/** 临期无人借用：共享人申请社区报废 */
+function requestScrap(id: string) {
+  const reason = window.prompt(`物品临近效期且无人借用，申请由社区报废（说明会留存）：`, '到期前无人借用，请社区按医疗/有害垃圾统一报废')
+  if (reason === null) return
+  const r = store.ownerRequestScrap(id, reason || '临期无人借用，共享人申请报废')
+  show(r.message, r.ok ? 'ok' : 'err')
+}
 </script>
 
 <template>
@@ -67,7 +79,7 @@ function recall(id: string) {
 
   <div class="card">
     <h2 style="margin-bottom: 4px">我的共享</h2>
-    <div class="muted">登记、审核进度、借出余量、交接与归还记录在这里连在一起。</div>
+    <div class="muted">登记、审核进度、借出余量、交接与归还记录在这里连在一起。临期物品请配合社区优先流转：无人借用时及时取回自用或申请报废；已借出的，借用人会按约定反馈使用/剩余/回收情况。</div>
     <div class="tabs" style="margin-top: 12px">
       <button class="chip" :class="{ active: tab === 'items' }" @click="tab = 'items'">我登记的物品（{{ myItems.length }}）</button>
       <button class="chip" :class="{ active: tab === 'requests' }" @click="tab = 'requests'">待我处理的借用申请（{{ incoming.length }}）</button>
@@ -83,6 +95,7 @@ function recall(id: string) {
         <div>
           <strong>{{ CATEGORY_ICONS[it.category] }} {{ it.name }}</strong>
           <span class="muted"> · {{ it.spec }} · 总量 {{ it.quantity }} · 可借 {{ available(it.id) }}</span>
+          <span style="margin-left: 6px"><ExpiryBadge :expiry-date="it.expiryDate" :now="store.nowIso" /></span>
         </div>
         <ItemStatusBadge :status="it.status" />
       </div>
@@ -92,17 +105,41 @@ function recall(id: string) {
       <div v-if="it.status === 'rejected'" class="banner banner-danger" style="margin-top: 8px">
         审核未通过：{{ it.review?.reason || it.closeReason || '不符合共享范围' }}
       </div>
+
+      <!-- 临期优先流转提醒 -->
+      <div
+        v-if="['published', 'partially_lent', 'lent_out'].includes(it.status) && isNearExpiry(it.expiryDate, store.nowIso)"
+        class="banner banner-warn"
+        style="margin-top: 8px"
+      >
+        <strong>⏳ 该物品还有 {{ days(it.id) }} 天到期，已进入社区“临期优先流转”清单。</strong>
+        社区会优先推荐给近期确有使用需求的家庭；若到期前无人借用，请<strong>取回继续自用</strong>，或<strong>申请由社区统一报废</strong>，不要让物品放到过期。
+      </div>
+      <div v-if="it.ownerRetrieveRemindedAt && ['published', 'partially_lent', 'lent_out'].includes(it.status)" class="banner banner-danger" style="margin-top: 8px">
+        📞 社区已于 {{ fmtDateTime(it.ownerRetrieveRemindedAt) }} 提醒：物品临期且暂无借用，请尽快取回或申请报废。
+      </div>
+      <div v-if="it.scrapRequestedAt && it.status !== 'scrapped'" class="banner banner-info" style="margin-top: 8px">
+        你已于 {{ fmtDateTime(it.scrapRequestedAt) }} 提交报废申请（{{ it.scrapRequestReason }}），等待社区工作人员确认。
+      </div>
+
       <div v-if="it.closeReason && ['quarantined', 'recalled', 'scrapped'].includes(it.status)" class="banner banner-info" style="margin-top: 8px">
         {{ it.closeReason }}
       </div>
       <div class="card-actions">
         <button class="btn btn-sm" @click="router.push(`/items/${it.id}`)">查看全流程记录</button>
         <button
+          v-if="['published', 'partially_lent'].includes(it.status) && days(it.id) <= OWNER_RETRIEVE_REMIND_DAYS && available(it.id) > 0 && !it.scrapRequestedAt"
+          class="btn btn-warn btn-sm"
+          @click="requestScrap(it.id)"
+        >
+          无人借用，申请社区报废
+        </button>
+        <button
           v-if="!['recalled', 'scrapped', 'rejected'].includes(it.status)"
           class="btn btn-sm btn-danger"
           @click="recall(it.id)"
         >
-          撤回共享
+          撤回取回
         </button>
       </div>
     </div>
@@ -141,9 +178,12 @@ function recall(id: string) {
 
       <template v-else>
         <div class="banner banner-info" style="margin-top: 8px">交接进行中，完成后请由取件人拍照确认（双方均可上传）。</div>
+        <div v-if="isNearExpiry(store.items.find((i) => i.id === r.itemId)?.expiryDate ?? '', store.nowIso)" class="banner banner-warn" style="margin-top: 8px">
+          ⏳ 临期物品：需由<strong>借用人本人</strong>在「我的借用」中逐项确认效期与使用前检查要求后拍照确认收到，确认记录会保留在物品时间线中。
+        </div>
         <PhotoCapture @captured="(p) => (photos[r.id] = p)" />
         <div class="card-actions">
-          <button class="btn btn-primary btn-sm" :disabled="!photos[r.id]" @click="completeHandover(r.id)">凭照片确认交接完成</button>
+          <button class="btn btn-primary btn-sm" :disabled="!photos[r.id] || isNearExpiry(store.items.find((i) => i.id === r.itemId)?.expiryDate ?? '', store.nowIso)" @click="completeHandover(r.id)">凭照片确认交接完成</button>
         </div>
       </template>
     </div>

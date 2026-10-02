@@ -40,7 +40,7 @@ export type RequestStatus =
   | 'confirmed' // 已确认并锁定数量，等待交接
   | 'handing' // 交接中（自取待取 / 配送中 / 已放门口）
   | 'completed' // 已完成（拍照确认）
-  | 'closed_returned' // 已闭环：归还/补充完成
+  | 'closed_returned' // 已闭环：归还/补充/社区回收完成
   | 'cancelled' // 已取消（超时未取 / 共享人撤回 / 主动取消 / 配送失败）
 
 /** 反馈类型 */
@@ -72,6 +72,32 @@ export interface Item extends ItemDraft {
   review?: { reviewerId: string; reviewerName: string; at: string; approved: boolean; reason?: string }
   /** 最近一次报废/撤回原因 */
   closeReason?: string
+  /** 临期无人借用：工作人员/系统提醒共享人取回或报废的时间 */
+  ownerRetrieveRemindedAt?: string
+  /** 共享人主动申请报废（待工作人员确认） */
+  scrapRequestedAt?: string
+  scrapRequestReason?: string
+}
+
+/** 临期物品借出后的用后反馈 */
+export interface UseFeedback {
+  /** 反馈时间 */
+  at: string
+  /** 是否实际使用 */
+  used: boolean
+  /** 已使用数量（used=true 时填写） */
+  usedCount?: number
+  /** 剩余数量（未使用或用剩） */
+  remaining: number
+  /** 是否需要社区上门/定点回收剩余物品 */
+  needRecycle: boolean
+  /** 使用前检查与备注 */
+  note?: string
+  /** 社区回收完成信息 */
+  recycleCompletedAt?: string
+  recycleHandlerId?: string
+  recycleHandlerName?: string
+  recycleNote?: string
 }
 
 export interface BorrowRequest {
@@ -101,8 +127,20 @@ export interface BorrowRequest {
   delayReason?: string
   cancelReason?: string
   /** 归还/补充方式 */
-  closeMode?: 'return_sealed' | 'restock_new' | 'mutual_aid'
+  closeMode?: 'return_sealed' | 'restock_new' | 'mutual_aid' | 'community_recycle'
   closeNote?: string
+  /** 交接时该物品是否按临期（≤30天）流转：需要用后追踪 */
+  nearExpiry?: boolean
+  /** 借用人效期与使用前检查确认（临期物品强制留存） */
+  expiryAckAt?: string
+  expiryAckDate?: string
+  preUseCheckAck?: boolean
+  /** 约定的用后反馈时间（临期物品 = 交接后约定期限） */
+  feedbackDueAt?: string
+  /** 工作人员/系统提醒借用人反馈的时间 */
+  feedbackRemindedAt?: string
+  /** 借用人用后反馈 */
+  useFeedback?: UseFeedback
 }
 
 export interface Feedback {
@@ -145,6 +183,12 @@ export interface TimelineEvent {
     | 'confirmed'
     | 'handover_started'
     | 'handover_confirmed'
+    | 'expiry_ack'
+    | 'use_feedback'
+    | 'feedback_reminder'
+    | 'near_expiry_reminder'
+    | 'scrap_requested'
+    | 'recycled'
     | 'returned'
     | 'restocked'
     | 'recalled'
@@ -155,11 +199,4 @@ export interface TimelineEvent {
     | 'delay_flagged'
     | 'cancelled'
   detail?: string
-}
-
-export interface DemoUser {
-  id: string
-  name: string
-  role: 'resident' | 'volunteer' | 'staff'
-  address: string
 }

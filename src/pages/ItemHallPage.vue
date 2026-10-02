@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMedkitStore } from '@/stores/medkit'
-import { CATEGORY_ICONS, CATEGORY_LABELS, SCENE_HINTS, SCENE_LABELS, STORAGE_LABELS } from '@/rules'
+import { CATEGORY_ICONS, CATEGORY_LABELS, isNearExpiry, SCENE_HINTS, SCENE_LABELS, STORAGE_LABELS } from '@/rules'
 import { daysUntil } from '@/utils/date'
 import type { Scene } from '@/types'
 import SafetyBanner from '@/components/SafetyBanner.vue'
@@ -28,9 +28,11 @@ const list = computed(() => {
       const k = keyword.value.trim()
       return i.name.includes(k) || i.spec.includes(k) || i.location.includes(k) || CATEGORY_LABELS[i.category].includes(k)
     })
-    .map((i) => ({ item: i, available: store.availableQty(i.id), waiting: store.waitingList(i.id).length }))
+    .map((i) => ({ item: i, available: store.availableQty(i.id), waiting: store.waitingList(i.id).length, near: isNearExpiry(i.expiryDate, now) }))
     .sort((a, b) => {
+      // 有余量的优先；同为有余量时，临期物品（≤30天）优先流转，再按到期日排序
       if ((a.available > 0 ? 1 : 0) !== (b.available > 0 ? 1 : 0)) return a.available > 0 ? -1 : 1
+      if (a.available > 0 && b.available > 0 && a.near !== b.near) return a.near ? -1 : 1
       return a.item.expiryDate < b.item.expiryDate ? -1 : 1
     })
 })
@@ -68,6 +70,9 @@ function go(id: string) {
 
   <div class="grid grid-2">
     <div v-for="row in list" :key="row.item.id" class="card item-card" role="button" tabindex="0" @click="go(row.item.id)" @keydown.enter="go(row.item.id)">
+      <div v-if="row.near" class="banner banner-warn" style="margin: 0; padding: 6px 10px; font-size: 0.82rem">
+        ⏳ <strong>临期优先流转</strong>：建议仅近期确需使用的家庭借用；交接时需确认效期与使用前检查，取走后按约定反馈使用/剩余/回收。
+      </div>
       <div class="title-row">
         <span class="item-icon">{{ CATEGORY_ICONS[row.item.category] }}</span>
         <span class="item-name">{{ row.item.name }}</span>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import SafetyBanner from '@/components/SafetyBanner.vue'
-import { CLOSE_MODE_LABELS, DELIVERY_SLA_HOURS, EXPIRY_DANGER_DAYS, EXPIRY_WARN_DAYS, PICKUP_WINDOW_HOURS } from '@/rules'
+import { CLOSE_MODE_LABELS, DELIVERY_SLA_HOURS, EXPIRY_DANGER_DAYS, EXPIRY_WARN_DAYS, NEAR_EXPIRY_FEEDBACK_HOURS, OWNER_RETRIEVE_REMIND_DAYS, PICKUP_WINDOW_HOURS } from '@/rules'
 </script>
 
 <template>
@@ -40,15 +40,27 @@ import { CLOSE_MODE_LABELS, DELIVERY_SLA_HOURS, EXPIRY_DANGER_DAYS, EXPIRY_WARN_
       <li><strong>登记</strong>：居民填写品名、规格、有效期、存放条件、是否整盒未开封、可借数量、取用地点。</li>
       <li><strong>审核发布</strong>：志愿者核验包装与效期后发布；“其他耗材”需社区工作人员二次复核。</li>
       <li><strong>申请/候补</strong>：按场景筛选后申请；余量不足自动排队，<strong>先确认者先得，确认即锁定库存</strong>，避免一件物品被多人同时拿走。</li>
-      <li><strong>交接</strong>：自取 / 志愿者代送 / 邻居门口无接触交接三选一；完成后必须拍照确认。</li>
-      <li><strong>归还/补充</strong>：{{ CLOSE_MODE_LABELS.return_sealed }}、{{ CLOSE_MODE_LABELS.restock_new }}，或共享人同意按{{ CLOSE_MODE_LABELS.mutual_aid }}处理。</li>
+      <li><strong>交接</strong>：自取 / 志愿者代送 / 邻居门口无接触交接三选一；完成后必须拍照确认。<strong>临期物品（≤30天）还须由借用人逐项确认效期与使用前检查要求并留痕</strong>。</li>
+      <li><strong>归还/补充</strong>：{{ CLOSE_MODE_LABELS.return_sealed }}、{{ CLOSE_MODE_LABELS.restock_new }}，或共享人同意按{{ CLOSE_MODE_LABELS.mutual_aid }}处理；临期借用须先按约定反馈，未使用的余量走{{ CLOSE_MODE_LABELS.community_recycle }}。</li>
       <li><strong>报废</strong>：过期、破损或核查不合格的物品由工作人员报废，全程留痕。</li>
     </ol>
 
     <h3>五、异常情况怎么处理</h3>
     <dl class="kv" style="grid-template-columns: 150px 1fr">
       <dt>效期临近</dt>
-      <dd>60/30 天分级提示，工作人员可提醒共享人优先流转；过期即自动禁借并等待报废。</dd>
+      <dd>
+        60/30 天分级提示；有效期 ≤30 天的物品进入工作人员<strong>“临期优先流转”清单</strong>，按“可使用场景 + 建议优先推荐范围”定向推荐给近期确需使用的家庭，大厅中临期物品排序靠前并显著标注。
+        距到期不足 {{ OWNER_RETRIEVE_REMIND_DAYS }} 天仍无人借用时，工作人员提醒共享人<strong>取回继续自用或申请社区报废</strong>，不放任其过期。
+      </dd>
+      <dt>临期物品交接</dt>
+      <dd>
+        交接页必须明确<strong>有效期与使用前检查要求</strong>（未开封封签完好、按存放条件保存、外观无异常、过期停用等），由<strong>借用人逐项勾选确认并留痕</strong>（含确认时间与效期日期），未确认不能完成交接。
+      </dd>
+      <dt>借出后用后追踪</dt>
+      <dd>
+        临期物品取走后约定 {{ NEAR_EXPIRY_FEEDBACK_HOURS }} 小时内，系统/工作人员提醒借用人反馈三件事：<strong>是否使用、是否剩余、是否需要社区回收</strong>；
+        未使用或用剩的余量由<strong>社区回收统一报废</strong>并闭环，避免临期物品长期滞留在个人家中。
+      </dd>
       <dt>多人同时申请</dt>
       <dd>确认时锁定库存，余量不足进入候补队列；取消或归还后按顺序递补。</dd>
       <dt>迟迟未取</dt>

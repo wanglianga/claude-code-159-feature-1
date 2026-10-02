@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMedkitStore } from '@/stores/medkit'
 import { useFlash } from '@/composables/useFlash'
 import {
   CATEGORY_LABELS,
   DELIVERY_SLA_HOURS,
+  isNearExpiry,
   METHOD_LABELS,
   PICKUP_WINDOW_HOURS,
   SCENE_LABELS,
   STORAGE_LABELS,
+  preUseChecks,
   validateDraft,
 } from '@/rules'
 import SafetyBanner from '@/components/SafetyBanner.vue'
@@ -21,6 +23,8 @@ const router = useRouter()
 const { show } = useFlash()
 const tab = ref<'review' | 'delivery' | 'exceptions' | 'waiting'>('review')
 const photos = ref<Record<string, string>>({})
+/** 临期物品配送完成前，志愿者确认已当面向借用人交代效期与使用前检查 */
+const deliveryAck = reactive<Record<string, boolean>>({})
 
 const reviewQueue = computed(() => store.reviewQueue)
 const overdue = computed(() => store.overduePickups)
@@ -50,9 +54,20 @@ function reject(id: string) {
   const r = store.reviewItem(id, false, reason)
   show(r.message, r.ok ? 'ok' : 'err')
 }
-function completeDelivery(id: string) {
-  const r = store.completeHandover(id, photos.value[id] ?? '', '志愿者送达并拍照确认')
-  show(r.message, r.ok ? 'ok' : 'err')
+function completeDelivery(r: (typeof deliveryTasks.value)[number]) {
+  const it = itemOf(r.itemId)
+  const near = isNearExpiry(it.expiryDate, store.nowIso)
+  if (near && !deliveryAck[r.id]) {
+    show('临期物品：请确认已当面向借用人交代效期与使用前检查要求，并由借用人知悉后再完成送达。', 'err')
+    return
+  }
+  const res = store.completeHandover(
+    r.id,
+    photos.value[r.id] ?? '',
+    '志愿者送达并拍照确认',
+    near ? { expiryDate: it.expiryDate, preUseCheckAck: true } : undefined,
+  )
+  show(res.message, res.ok ? 'ok' : 'err')
 }
 function delay(id: string) {
   const reason = window.prompt('延误原因（会通知借用人和社区工作人员）：', '临时有事，预计延迟 2 小时')
@@ -148,11 +163,21 @@ function confirmWaiting(id: string) {
         收件人：{{ r.applicantName }} · 场景：{{ SCENE_LABELS[r.scene] }} · 取件点：{{ itemOf(r.itemId).location }}
       </div>
       <div v-if="r.note" class="muted">留言：{{ r.note }}</div>
+      <div v-if="isNearExpiry(itemOf(r.itemId).expiryDate, store.nowIso)" class="banner banner-warn" style="margin-top: 8px">
+        <strong>⏳ 临期物品（有效期至 {{ itemOf(r.itemId).expiryDate }}），送达时请当面向借用人交代：</strong>
+        <ul style="margin: 4px 0; padding-left: 20px">
+          <li v-for="(c, i) in preUseChecks({ category: itemOf(r.itemId).category, storage: itemOf(r.itemId).storage })" :key="i">{{ c }}</li>
+        </ul>
+        <label class="check-row">
+          <input type="checkbox" v-model="deliveryAck[r.id]" />
+          借用人已知悉效期与使用前检查要求（确认记录会以借用人名义留存，并约定 72 小时内反馈使用/剩余/回收）
+        </label>
+      </div>
       <div v-if="r.delayReason" class="banner banner-warn" style="margin-top: 8px">延误说明：{{ r.delayReason }}</div>
 
       <PhotoCapture @captured="(p) => (photos[r.id] = p)" />
       <div class="card-actions">
-        <button class="btn btn-primary btn-sm" :disabled="!photos[r.id]" @click="completeDelivery(r.id)">送达拍照，完成交接</button>
+        <button class="btn btn-primary btn-sm" :disabled="!photos[r.id] || (isNearExpiry(itemOf(r.itemId).expiryDate, store.nowIso) && !deliveryAck[r.id])" @click="completeDelivery(r)">送达拍照，完成交接</button>
         <button class="btn btn-warn btn-sm" @click="delay(r.id)">报备配送延误</button>
         <button class="btn btn-sm" @click="reassign(r.id)">改派工作人员兜底</button>
       </div>

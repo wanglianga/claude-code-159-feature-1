@@ -52,7 +52,7 @@ function advance(h: number) {
     <div class="container">
       <div>
         演示时钟：<strong>{{ fmtDateTime(store.nowIso) }}</strong>
-        <span class="muted" style="margin-left: 8px">快进用于演示效期临近、超时未取、配送延误</span>
+        <span class="muted" style="margin-left: 8px">快进用于演示效期临近、超时未取、配送延误与临期用后反馈到期</span>
       </div>
       <div>
         <button class="btn btn-sm" @click="advance(6)">+6小时</button>

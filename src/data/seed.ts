@@ -235,6 +235,83 @@ function buildSeed(now: string): { items: Item[]; requests: BorrowRequest[]; fee
       createdAt: addDays(now, -200),
       publishedAt: addDays(now, -199),
     },
+    // —— 临期优先流转专题种子 ——
+    {
+      // 题面场景：居民共享的退热贴还有十天到期，尚有余量，等待工作人员优先推荐
+      id: 'i13',
+      ownerId: 'u_a',
+      ownerName: '王秀兰',
+      name: '儿童退热贴（临期分享）',
+      category: 'fever_patch',
+      spec: '4贴/盒',
+      expiryDate: addDays(now, 10).slice(0, 10),
+      storage: 'cool_dry',
+      sealed: true,
+      quantity: 2,
+      location: '3号楼1单元一楼“邻里药箱”共享柜 A格',
+      sceneTags: ['child_night_fever'],
+      note: '还有十天到期，家里用不上了，希望优先转给今晚/近期真正有发热孩子的家庭，不要拿去囤着。',
+      status: 'published',
+      createdAt: addDays(now, -3),
+      publishedAt: addDays(now, -3),
+    },
+    {
+      // 临期已借出：借用人到约定反馈时间仍未反馈，需要系统/工作人员提醒
+      id: 'i14',
+      ownerId: 'u_a',
+      ownerName: '王秀兰',
+      name: '医用退热贴（便携装）',
+      category: 'fever_patch',
+      spec: '2贴/袋',
+      expiryDate: addDays(now, 8).slice(0, 10),
+      storage: 'cool_dry',
+      sealed: true,
+      quantity: 1,
+      location: '3号楼1单元一楼“邻里药箱”共享柜 A格',
+      sceneTags: ['child_night_fever'],
+      note: '临期优先流转借出，约定取走后 72 小时内反馈使用与剩余情况。',
+      status: 'lent_out',
+      createdAt: addDays(now, -5),
+      publishedAt: addDays(now, -5),
+    },
+    {
+      // 临期且无人借用、5 天后到期：工作人员应提醒共享人取回或报废
+      id: 'i15',
+      ownerId: 'u_c',
+      ownerName: '周敏',
+      name: '碘伏棉片（临期）',
+      category: 'iodophor',
+      spec: '独立包装 10片/盒',
+      expiryDate: addDays(now, 5).slice(0, 10),
+      storage: 'room_temp',
+      sealed: true,
+      quantity: 3,
+      location: '5号楼3单元门口便民架',
+      sceneTags: ['elderly_wound'],
+      note: '一直无人借用，到期前请提醒我取回或直接报废。',
+      status: 'published',
+      createdAt: addDays(now, -12),
+      publishedAt: addDays(now, -12),
+    },
+    {
+      // 临期借出后借用人已反馈：未使用、有剩余、申请社区回收，等待工作人员上门回收闭环
+      id: 'i16',
+      ownerId: 'u_a',
+      ownerName: '王秀兰',
+      name: '退热贴（余量分享）',
+      category: 'fever_patch',
+      spec: '2贴/盒',
+      expiryDate: addDays(now, 6).slice(0, 10),
+      storage: 'cool_dry',
+      sealed: true,
+      quantity: 1,
+      location: '3号楼1单元一楼“邻里药箱”共享柜 A格',
+      sceneTags: ['child_night_fever', 'home_care'],
+      note: '临期借出，借人家孩子没烧起来，未使用，申请社区回收。',
+      status: 'lent_out',
+      createdAt: addDays(now, -6),
+      publishedAt: addDays(now, -6),
+    },
   ]
 
   const requests: BorrowRequest[] = [
@@ -322,6 +399,65 @@ function buildSeed(now: string): { items: Item[]; requests: BorrowRequest[]; fee
       volunteerId: 'u_v',
       volunteerName: '陈芳（志愿者）',
     },
+    {
+      // 临期已借出、到约定反馈时间未反馈（完成已 80 小时，超过 72 小时约定）
+      id: 'r6',
+      itemId: 'i14',
+      applicantId: 'u_c',
+      applicantName: '周敏',
+      scene: 'child_night_fever',
+      quantity: 1,
+      method: 'self_pickup',
+      note: '孩子有点发热，先备一盒退热贴。',
+      status: 'completed',
+      createdAt: addHours(now, -90),
+      confirmedAt: addHours(now, -88),
+      handingAt: addHours(now, -86),
+      completedAt: addHours(now, -80),
+      confirmerId: 'u_a',
+      confirmerName: '王秀兰',
+      handoverPhoto: 'handover-r6.jpg（演示凭证：共享柜取件自拍）',
+      handoverNote: '封签完好，已逐项确认效期与使用前检查要求。',
+      nearExpiry: true,
+      expiryAckAt: addHours(now, -86),
+      expiryAckDate: addDays(now, 8).slice(0, 10),
+      preUseCheckAck: true,
+      feedbackDueAt: addHours(addHours(now, -80), 72),
+    },
+    {
+      // 临期借出、已按约定反馈：未使用、剩 1、需要社区回收
+      id: 'r7',
+      itemId: 'i16',
+      applicantId: 'u_b',
+      applicantName: '李建国',
+      scene: 'home_care',
+      quantity: 1,
+      method: 'volunteer_delivery',
+      note: '担心夜里孩子发烧备用。',
+      status: 'completed',
+      createdAt: addDays(now, -5),
+      confirmedAt: addDays(now, -5),
+      handingAt: addDays(now, -5),
+      completedAt: addDays(now, -4),
+      confirmerId: 'u_a',
+      confirmerName: '王秀兰',
+      volunteerId: 'u_v',
+      volunteerName: '陈芳（志愿者）',
+      handoverPhoto: 'handover-r7.jpg（演示凭证：志愿者送达后拍照）',
+      handoverNote: '送达本人，外包装完好，已口头告知效期与检查要求。',
+      nearExpiry: true,
+      expiryAckAt: addDays(now, -5),
+      expiryAckDate: addDays(now, 6).slice(0, 10),
+      preUseCheckAck: true,
+      feedbackDueAt: addHours(addDays(now, -4), 72),
+      useFeedback: {
+        at: addHours(now, -30),
+        used: false,
+        remaining: 1,
+        needRecycle: true,
+        note: '孩子没烧起来，一盒都没拆，怕放过期，麻烦社区回收处理。',
+      },
+    },
   ]
 
   const feedbacks: Feedback[] = [
@@ -364,6 +500,12 @@ export function rebuildTimeline(items: Item[], requests: BorrowRequest[], feedba
     if (it.publishedAt) {
       push({ id: `${it.id}_pub`, itemId: it.id, at: it.publishedAt, actorId: 'u_v', actorName: '志愿者', kind: 'published', detail: '发布到邻里药箱大厅' })
     }
+    if (it.ownerRetrieveRemindedAt) {
+      push({ id: `${it.id}_nearempty`, itemId: it.id, at: it.ownerRetrieveRemindedAt, actorId: 'u_s', actorName: '社区工作人员', kind: 'near_expiry_reminder', detail: '临期无人借用：已提醒共享人取回或报废' })
+    }
+    if (it.scrapRequestedAt) {
+      push({ id: `${it.id}_scrapreq`, itemId: it.id, at: it.scrapRequestedAt, actorId: it.ownerId, actorName: it.ownerName, kind: 'scrap_requested', detail: `共享人申请到期报废：${it.scrapRequestReason ?? '到期无人借用'}` })
+    }
     if (it.status === 'recalled') {
       push({ id: `${it.id}_recall`, itemId: it.id, at: it.publishedAt ?? it.createdAt, actorId: it.ownerId, actorName: it.ownerName, kind: 'recalled', detail: it.closeReason ?? '共享人撤回' })
     }
@@ -381,9 +523,45 @@ export function rebuildTimeline(items: Item[], requests: BorrowRequest[], feedba
     push({ id: `${r.id}_apply`, itemId: r.itemId, requestId: r.id, at: r.createdAt, actorId: r.applicantId, actorName: r.applicantName, kind: r.status === 'waiting' ? 'waitlisted' : 'applied', detail: `申请借用「${name}」×${r.quantity}` })
     if (r.confirmedAt) push({ id: `${r.id}_confirm`, itemId: r.itemId, requestId: r.id, at: r.confirmedAt, actorId: r.confirmerId ?? 'u_v', actorName: r.confirmerName ?? '志愿者', kind: 'confirmed', detail: `确认申请并锁定库存 ×${r.quantity}` })
     if (r.handingAt) push({ id: `${r.id}_handing`, itemId: r.itemId, requestId: r.id, at: r.handingAt, actorId: r.volunteerId ?? r.confirmerId ?? 'u_v', actorName: r.volunteerName ?? r.confirmerName ?? '志愿者', kind: 'handover_started', detail: r.method === 'volunteer_delivery' ? '志愿者出发代送' : r.method === 'door_contactless' ? '已放到约定门口位置' : '物品已备好，等待自取' })
-    if (r.completedAt) push({ id: `${r.id}_done`, itemId: r.itemId, requestId: r.id, at: r.completedAt, actorId: r.applicantId, actorName: r.applicantName, kind: 'handover_confirmed', detail: `交接拍照确认：${r.handoverPhoto ?? '已上传照片'}${r.handoverNote ? `；${r.handoverNote}` : ''}` })
+    if (r.expiryAckAt) {
+      push({
+        id: `${r.id}_expiryack`,
+        itemId: r.itemId,
+        requestId: r.id,
+        at: r.expiryAckAt,
+        actorId: r.applicantId,
+        actorName: r.applicantName,
+        kind: 'expiry_ack',
+        detail: `借用人确认：已核对有效期至 ${r.expiryAckDate ?? '（未记录）'}，并逐项确认使用前检查要求（未开封封签完好、过期停用等）；约定 ${r.feedbackDueAt ? '取走后72小时内反馈使用/剩余/回收需求' : ''}`,
+      })
+    }
+    if (r.completedAt) push({ id: `${r.id}_done`, itemId: r.itemId, requestId: r.id, at: r.completedAt, actorId: r.applicantId, actorName: r.applicantName, kind: 'handover_confirmed', detail: `交接拍照确认：${r.handoverPhoto ?? '已上传照片'}${r.handoverNote ? `；${r.handoverNote}` : ''}${r.nearExpiry ? '；该物品按临期优先流转，借用人已留效期确认记录' : ''}` })
+    if (r.feedbackRemindedAt) {
+      push({ id: `${r.id}_fbtip`, itemId: r.itemId, requestId: r.id, at: r.feedbackRemindedAt, actorId: 'u_s', actorName: '社区工作人员', kind: 'feedback_reminder', detail: '已到约定反馈时间，提醒借用人反馈是否使用、是否剩余、是否需要社区回收' })
+    }
+    if (r.useFeedback) {
+      push({
+        id: `${r.id}_usefb`,
+        itemId: r.itemId,
+        requestId: r.id,
+        at: r.useFeedback.at,
+        actorId: r.applicantId,
+        actorName: r.applicantName,
+        kind: 'use_feedback',
+        detail: `用后反馈：${r.useFeedback.used ? `已使用 ${r.useFeedback.usedCount ?? ''}片/件` : '未使用'}，剩余 ${r.useFeedback.remaining}，${r.useFeedback.needRecycle ? '需要社区回收' : '无需社区回收'}${r.useFeedback.note ? `；${r.useFeedback.note}` : ''}`,
+      })
+    }
     if (r.status === 'closed_returned' && r.closedAt) {
-      push({ id: `${r.id}_close`, itemId: r.itemId, requestId: r.id, at: r.closedAt, actorId: r.applicantId, actorName: r.applicantName, kind: r.closeMode === 'restock_new' ? 'restocked' : 'returned', detail: r.closeMode === 'mutual_aid' ? '邻里赠予，无需归还' : r.closeMode === 'restock_new' ? '已补充同规格新品' : '已归还原物（未拆封）' })
+      const kind = r.closeMode === 'community_recycle' ? 'recycled' : r.closeMode === 'restock_new' ? 'restocked' : 'returned'
+      const detail =
+        r.closeMode === 'community_recycle'
+          ? `社区回收剩余物品 ${r.useFeedback?.remaining ?? r.quantity} 件并统一报废处理，临期物品未滞留居民家中`
+          : r.closeMode === 'mutual_aid'
+            ? '邻里赠予，无需归还'
+            : r.closeMode === 'restock_new'
+              ? '已补充同规格新品'
+              : '已归还原物（未拆封）'
+      push({ id: `${r.id}_close`, itemId: r.itemId, requestId: r.id, at: r.closedAt, actorId: r.applicantId, actorName: r.applicantName, kind, detail })
     }
     if (r.status === 'cancelled') {
       push({ id: `${r.id}_cancel`, itemId: r.itemId, requestId: r.id, at: r.closedAt ?? r.createdAt, actorId: r.applicantId, actorName: r.applicantName, kind: 'cancelled', detail: r.cancelReason ?? '申请取消，库存释放' })

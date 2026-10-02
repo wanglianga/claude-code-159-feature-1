@@ -7,10 +7,14 @@ import {
   CATEGORY_ICONS,
   CATEGORY_LABELS,
   FEEDBACK_TYPE_LABELS,
+  isNearExpiry,
   METHOD_LABELS,
+  NEAR_EXPIRY_FEEDBACK_HOURS,
   SCENE_HINTS,
   SCENE_LABELS,
+  SCENE_PRIORITY_SCOPE,
   STORAGE_LABELS,
+  preUseChecks,
 } from '@/rules'
 import { daysUntil } from '@/utils/date'
 import type { FeedbackType, HandoverMethod, Scene } from '@/types'
@@ -43,6 +47,8 @@ const agreed = reactive({ source: false, expiry: false, package: false, limit: f
 const agreeAll = computed(() => agreed.source && agreed.expiry && agreed.package && agreed.limit)
 
 const expired = computed(() => (item.value ? daysUntil(item.value.expiryDate, store.nowIso) < 0 : false))
+const near = computed(() => (item.value ? isNearExpiry(item.value.expiryDate, store.nowIso) : false))
+const checks = computed(() => (item.value ? preUseChecks({ category: item.value.category, storage: item.value.storage }) : []))
 const blocked = computed(() => !item.value || ['rejected', 'recalled', 'scrapped', 'quarantined', 'pending_review'].includes(item.value.status))
 
 function openApply() {
@@ -101,6 +107,12 @@ function submitFeedback() {
     <div v-if="item.status === 'recalled'" class="banner banner-warn">
       <strong>共享人已撤回该物品。</strong>{{ item.closeReason }}
     </div>
+    <div v-if="near && !expired" class="banner banner-warn">
+      <strong>⏳ 该物品临近效期，按“临期优先流转”处理。</strong>
+      请仅在<strong>近期确定会使用</strong>时借用，不要领回囤放；交接时必须逐项核对效期与使用前检查要求并确认留痕，
+      取走后请在 <strong>{{ NEAR_EXPIRY_FEEDBACK_HOURS }} 小时</strong>内反馈<strong>是否使用、是否剩余、是否需要社区回收</strong>，
+      未使用或用剩的余量由社区回收统一报废，到期后不得继续使用或转赠。
+    </div>
 
     <div class="card">
       <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
@@ -136,6 +148,18 @@ function submitFeedback() {
         <strong>适用限制（借用前必读）</strong>
         仅用于对应场景下的临时辅助：物理降温、浅表小伤口清洁包扎、口罩应急与居家护理耗材周转。
         本物品<strong>不是药品、不能替代药物与医生诊治</strong>；儿童高热不退、老人伤口较深/出血不止/化脓、呼吸困难等情况请立即就医。
+      </div>
+
+      <!-- 临期物品：使用前检查要求 + 建议优先推荐范围 -->
+      <div v-if="near" class="banner banner-warn" style="margin-top: 12px">
+        <strong>使用前检查要求（交接时逐项核对，异常当场拒收并拍照反馈）</strong>
+        <ul style="margin: 6px 0; padding-left: 20px">
+          <li v-for="(c, i) in checks" :key="i">{{ c }}</li>
+        </ul>
+        <strong>建议优先推荐范围：</strong>
+        <ul style="margin: 6px 0 0; padding-left: 20px">
+          <li v-for="s in item.sceneTags" :key="s">{{ SCENE_PRIORITY_SCOPE[s] }}</li>
+        </ul>
       </div>
 
       <div class="card-actions" style="margin-top: 12px">
@@ -174,7 +198,7 @@ function submitFeedback() {
       <div class="banner banner-warn">
         <strong>请逐项确认后再提交（每次借用都必须看到这四项）</strong>
         <label class="check-row"><input type="checkbox" v-model="agreed.source" /> 我已知晓<strong>来源</strong>：{{ item.ownerName }} 共享、志愿者审核，社区只做物品流转，不做担保与诊断。</label>
-        <label class="check-row"><input type="checkbox" v-model="agreed.expiry" /> 我已核对<strong>效期</strong>：{{ item.expiryDate }}，临期物品会显著标注，过期不得使用。</label>
+        <label class="check-row"><input type="checkbox" v-model="agreed.expiry" /> 我已核对<strong>效期</strong>：{{ item.expiryDate }}，临期物品会显著标注，过期不得使用。<template v-if="near">本物品为临期物品，交接时还会逐项确认效期与使用前检查要求并留存确认记录，取走后 {{ NEAR_EXPIRY_FEEDBACK_HOURS }} 小时内反馈使用/剩余/回收需求。</template></label>
         <label class="check-row"><input type="checkbox" v-model="agreed.package" /> 我将在交接时检查<strong>包装状态</strong>：须整盒/整包未开封、封签完好；破损当场拒收并拍照反馈。</label>
         <label class="check-row"><input type="checkbox" v-model="agreed.limit" /> 我了解<strong>适用限制</strong>：仅限临时辅助，不替代就医；如症状加重或使用后不适立即就医并反馈。</label>
       </div>
